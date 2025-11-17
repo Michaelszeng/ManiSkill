@@ -1,0 +1,71 @@
+# eval_checkpoint.py - Evaluate a trained PPO checkpoint with human rendering
+import math
+import time
+
+import gymnasium as gym
+import numpy as np
+import torch
+from ppo_fast import Agent  # Now we can import directly since we're in the same directory
+
+# Configuration
+control_mode = "pd_joint_delta_pos"
+checkpoint_path = f"/home/michzeng/.maniskill/demos/PushT-v1/rl/ppo_{control_mode}_ckpt.pt"
+env_id = "PushT-v1"
+num_episodes = 5
+
+# Create a single environment with human rendering
+env = gym.make(
+    env_id,
+    num_envs=1,
+    obs_mode="state",
+    render_mode="human",  # This opens a visualization window
+    control_mode=control_mode,
+    sim_backend="physx_cuda",
+)
+
+# Load the trained agent
+n_obs = math.prod(env.single_observation_space.shape)
+n_act = math.prod(env.single_action_space.shape)
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+print(f"Observation space: {n_obs}, Action space: {n_act}")
+print(f"Loading checkpoint from: {checkpoint_path}")
+
+agent = Agent(n_obs, n_act, device=device)
+checkpoint = torch.load(checkpoint_path, map_location=device)
+agent.load_state_dict(checkpoint)
+agent.eval()
+
+print("Checkpoint loaded successfully!")
+
+# Run episodes
+for episode in range(num_episodes):
+    obs, _ = env.reset()
+    episode_reward = 0
+    done = False
+    step = 0
+
+    # Render the initial state
+    env.render()
+    time.sleep(0.5)  # Give time for rendering to initialize
+
+    print(f"\nStarting Episode {episode + 1}...")
+
+    while not done and step < 200:  # max 200 steps per episode
+        with torch.no_grad():
+            # Use actor_mean for deterministic actions (no exploration)
+            action = agent.actor_mean(obs)
+
+        obs, reward, terminated, truncated, info = env.step(action)
+        env.render()  # Explicitly render each step
+        time.sleep(0.01)  # Small delay to see the motion
+
+        done = terminated[0] or truncated[0]
+        episode_reward += reward[0].item()
+        step += 1
+
+    print(
+        f"Episode {episode + 1}: Reward = {episode_reward:.2f}, Steps = {step}, Success: {info.get('success', [False])[0]}"
+    )
+
+env.close()
