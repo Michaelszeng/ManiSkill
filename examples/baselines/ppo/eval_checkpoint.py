@@ -12,6 +12,16 @@ control_mode = "pd_joint_delta_pos"
 checkpoint_path = f"/home/michzeng/.maniskill/demos/PushT-v1/rl/ppo_{control_mode}_ckpt.pt"
 env_id = "PushT-v1"
 num_episodes = 5
+seed = 1  # Set seed for reproducibility
+
+# Set random seeds for reproducibility
+np.random.seed(seed)
+torch.manual_seed(seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 # Create a single environment with human rendering
 env = gym.make(
@@ -21,6 +31,7 @@ env = gym.make(
     render_mode="human",  # This opens a visualization window
     control_mode=control_mode,
     sim_backend="physx_cuda",
+    max_episode_steps=500,
 )
 
 # Load the trained agent
@@ -40,7 +51,8 @@ print("Checkpoint loaded successfully!")
 
 # Run episodes
 for episode in range(num_episodes):
-    obs, _ = env.reset()
+    # Reset with seed for reproducibility (seed increments for each episode)
+    obs, _ = env.reset(seed=seed + episode)
     episode_reward = 0
     done = False
     step = 0
@@ -51,12 +63,13 @@ for episode in range(num_episodes):
 
     print(f"\nStarting Episode {episode + 1}...")
 
-    while not done and step < 200:  # max 200 steps per episode
+    while not done:
         with torch.no_grad():
             # Use actor_mean for deterministic actions (no exploration)
             action = agent.actor_mean(obs)
 
         obs, reward, terminated, truncated, info = env.step(action)
+        print(f"info: {info}")
         env.render()  # Explicitly render each step
         time.sleep(0.01)  # Small delay to see the motion
 
