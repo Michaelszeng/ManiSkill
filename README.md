@@ -1,5 +1,57 @@
 # ManiSkill 3 (Beta)
 
+## Michael's Notes
+
+### Install
+
+Clone my diffusion policy repo and install (along with required dependencies):
+```bash
+pip install -e /home/michzeng/diffusion-policy --no-deps
+pip install -r diffusion_policy_requirements.txt
+```
+
+### Useful Commands:
+
+Generate data from PPO checkpoint (note: you must convert to rgb dataset using the command below after running this):
+```bash
+python examples/baselines/ppo/ppo_fast.py \
+  --env_id="PushT-v1" \
+  --control-mode="pd_ee_delta_pos" \
+  --evaluate \
+  --checkpoint=/home/michzeng/.maniskill/demos/PushT-v1/rl/ppo_pd_ee_delta_pos_ckpt.pt \
+  --num_eval_envs=1 \
+  --num-eval-steps=10000 \
+  --save-trajectory \
+  --no-capture-video \
+  --eval-partial-reset
+```
+Note: `num-eval-steps` is the number of times we call `step()` on the vectorized environment. So the total number of steps taken is `num-eval-steps * num_eval_envs`.
+Note: with `eval-partial-reset`, the policy will terminate and reset immediately upon success, but this only works with `num_eval_envs=1`.
+
+Regenerate Dataset with RGB observations (add `--count <n>` to limit the number of episodes replayed):
+```bash
+python -m mani_skill.trajectory.replay_trajectory \
+    --traj-path /home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory.none.pd_joint_delta_pos.physx_cuda.h5 \
+    -o rgb \
+    -b physx_cuda \
+    -n 16 \
+    --save-traj \
+    --use-env-states \
+    --allow-failure
+```
+
+Replay Dataset (just to visualize):
+```bash
+python -m mani_skill.trajectory.replay_trajectory \
+    --traj-path /home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory.none.pd_joint_delta_pos.physx_cuda.h5 \
+    -b physx_cuda \
+    --vis \
+    --use-env-states \
+    --count 3
+```
+
+
+
 
 ![teaser](figures/teaser.jpg)
 <p style="text-align: center; font-size: 0.8rem; color: #999;margin-top: -1rem;">Sample of environments/robots rendered with ray-tracing. Scene datasets sourced from AI2THOR and ReplicaCAD</p>

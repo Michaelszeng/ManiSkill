@@ -1,6 +1,5 @@
 """
-Minimal example showing the core concepts of loading and running
-a trained diffusion policy model in ManiSkill environments.
+Run a trained diffusion policy model using https://github.com/Michaelszeng/diffusion-policy-experiments in ManiSkill.
 """
 
 import sys
@@ -26,10 +25,10 @@ from diffusion_policy.workspace.base_workspace import BaseWorkspace
 ENV_ID = "PushT-v1"
 NUM_FAILURES_TO_STOP = 10
 CHECKPOINT = "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/latest.ckpt"
-
 # Must match training configuration
 STATE_MODE = "qpos_qvel"  # "qpos", "qpos_qvel", "tcp_pose"
-N_ACTION_STEPS = 8  # Action horizon: number of actions to execute before getting new prediction
+CONTROL_MODE = "pd_joint_delta_pos"  # "pd_ee_delta_pos"
+N_ACTION_STEPS = 8  # Action horizon
 
 
 def extract_state(obs, state_mode):
@@ -133,7 +132,7 @@ def main():
     # Base seed for reproducibility (None to disable)
     # Episode N uses seed = SEED + N
     # To reproduce episode 2, set SEED=42 and run episodes 0,1,2 or set SEED=44 and run 1 episode
-    SEED = 0
+    SEED = 1
     np.random.seed(SEED)
     torch.manual_seed(SEED)
     if torch.cuda.is_available():
@@ -160,9 +159,9 @@ def main():
     env = gym.make(
         ENV_ID,
         obs_mode="rgbd",  # Get both state and camera images
-        control_mode="pd_joint_delta_pos",
+        control_mode=CONTROL_MODE,
         render_mode="human",
-        max_episode_steps=300,
+        max_episode_steps=100,
     )
 
     # Find camera keys and expected image sizes from config
@@ -217,7 +216,9 @@ def main():
                         "agent_pos": torch.from_numpy(np.stack(list(state_buffer), axis=0)).unsqueeze(0).to(DEVICE),
                     }
                 }
-                print(f"obs_dict.agent_pos: {obs_dict['obs']['agent_pos']}")
+                # print(
+                #     f"obs_dict.agent_pos (shape: {obs_dict['obs']['agent_pos'].shape}): {obs_dict['obs']['agent_pos']}"
+                # )
 
                 # Add camera images
                 for camera_key in camera_keys:
@@ -261,7 +262,11 @@ def main():
                 # Run policy inference
                 with torch.no_grad():
                     result = policy.predict_action(obs_dict, use_DDIM=True)
-                    actions = result["action"][0].cpu().numpy()
+                    actions = result["action_pred"][0].cpu().numpy()
+
+                # print(
+                #     f"action chunk (shape: {actions[action_start_idx:action_end_idx].shape}): {actions[action_start_idx:action_end_idx]}"
+                # )
 
                 # Add actions to queue using proper indexing (skip first n_obs_steps-1 for temporal alignment)
                 for action in actions[action_start_idx:action_end_idx]:
@@ -287,16 +292,47 @@ def main():
 
             env.render()
 
-            if info.get("success", False):
+            # Print detailed success metrics
+            # SUCCESS CRITERIA: The T block must cover ≥90% of the goal T's 2D area
+            # This is measured by projecting both T shapes onto a 64x64 grid and
+            # calculating: intersection_area / goal_area >= 0.90
+            # The T must be correctly positioned, rotated, and aligned within ~10% tolerance
+            success = info.get("success", False)
+            if isinstance(success, torch.Tensor):
+                success = success.item()
+
+            # Calculate and display intersection percentage
+            # Access the base environment to get intersection data
+            base_env = env.unwrapped
+            intersection_ratio = base_env.pseudo_render_intersection()
+            if isinstance(intersection_ratio, torch.Tensor):
+                intersection_ratio = intersection_ratio.item()
+
+            print(f"Step {step}: intersection={intersection_ratio:.4f} (need ≥0.90), success={success}")
+
+            if success:
+                print("✓ SUCCESS! T block aligned with 90%+ coverage!")
                 break
 
         success = info.get("success", False)
         # Convert success to bool if it's a tensor
         if isinstance(success, torch.Tensor):
             success = success.item()
+
+        # Get final intersection ratio
+        base_env = env.unwrapped
+        final_intersection = base_env.pseudo_render_intersection()
+        if isinstance(final_intersection, torch.Tensor):
+            final_intersection = final_intersection.item()
+
         if not success:
             failed_episodes.append(episode_seed)
-        print(f"Episode finished: reward={episode_reward:.3f}, steps={step}, success={success}, seed={episode_seed}")
+
+        print(
+            f"Episode finished: reward={episode_reward:.3f}, steps={step}, "
+            f"success={success}, final_intersection={final_intersection:.4f} "
+            f"(need ≥0.90), seed={episode_seed}"
+        )
 
         episode += 1
 

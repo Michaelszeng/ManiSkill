@@ -485,7 +485,10 @@ if __name__ == "__main__":
             eval_obs, _ = eval_envs.reset()
             eval_metrics = defaultdict(list)
             num_episodes = 0
-            for _ in range(args.num_eval_steps):
+            print(
+                f"Running evaluation for {args.num_eval_steps} steps with {args.num_eval_envs} parallel environments..."
+            )
+            for step_idx in range(args.num_eval_steps):
                 with torch.no_grad():
                     eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(
                         agent.actor_mean(eval_obs)
@@ -495,12 +498,24 @@ if __name__ == "__main__":
                         num_episodes += mask.sum()
                         for k, v in eval_infos["final_info"]["episode"].items():
                             eval_metrics[k].append(v)
+                # Print progress every 100 steps or at the end
+                if (step_idx + 1) % 100 == 0 or step_idx == args.num_eval_steps - 1:
+                    print(
+                        f"  Eval progress: {step_idx + 1}/{args.num_eval_steps} steps, "
+                        f"{num_episodes} episodes collected"
+                    )
             eval_metrics_mean = {}
             for k, v in eval_metrics.items():
                 mean = torch.stack(v).float().mean()
                 eval_metrics_mean[k] = mean
                 if logger is not None:
                     logger.add_scalar(f"eval/{k}", mean, global_step)
+            print(f"Evaluation complete: {num_episodes} episodes collected")
+            if eval_metrics_mean:
+                print(
+                    f"  Success rate: {eval_metrics_mean.get('success_once', 0):.2%}, "
+                    f"Avg return: {eval_metrics_mean.get('return', 0):.2f}"
+                )
             pbar.set_description(
                 f"success_once: {eval_metrics_mean['success_once']:.2f}, return: {eval_metrics_mean['return']:.2f}"
             )

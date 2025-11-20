@@ -35,12 +35,7 @@ class WhiteTableSceneBuilder(TableSceneBuilder):
                     1.673,
                 ]
             )
-            qpos = (
-                self.env._episode_rng.normal(
-                    0, self.robot_init_qpos_noise, (b, len(qpos))
-                )
-                + qpos
-            )
+            qpos = self.env._episode_rng.normal(0, self.robot_init_qpos_noise, (b, len(qpos))) + qpos
             self.env.agent.reset(qpos)
             self.env.agent.robot.set_pose(sapien.Pose([-0.615, 0, 0]))
 
@@ -48,11 +43,7 @@ class WhiteTableSceneBuilder(TableSceneBuilder):
         super().build()
         # cheap way to un-texture table
         for part in self.table._objs:
-            for triangle in (
-                part.find_component_by_type(sapien.render.RenderBodyComponent)
-                .render_shapes[0]
-                .parts
-            ):
+            for triangle in part.find_component_by_type(sapien.render.RenderBodyComponent).render_shapes[0].parts:
                 triangle.material.set_base_color(np.array([255, 255, 255, 255]) / 255)
                 triangle.material.set_base_color_texture(None)
                 triangle.material.set_normal_texture(None)
@@ -115,18 +106,14 @@ class PushTEnv(BaseEnv):
     T_dynamic_friction = 3
     T_static_friction = 3
 
-    def __init__(
-        self, *args, robot_uids="panda_stick", robot_init_qpos_noise=0.02, **kwargs
-    ):
+    def __init__(self, *args, robot_uids="panda_stick", robot_init_qpos_noise=0.02, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
 
     @property
     def _default_sim_config(self):
         return SimConfig(
-            gpu_memory_config=GPUMemoryConfig(
-                found_lost_pairs_capacity=2**25, max_rigid_patch_count=2**18
-            )
+            gpu_memory_config=GPUMemoryConfig(found_lost_pairs_capacity=2**25, max_rigid_patch_count=2**18)
         )
 
     @property
@@ -147,9 +134,7 @@ class PushTEnv(BaseEnv):
     @property
     def _default_human_render_camera_configs(self):
         pose = sapien_utils.look_at(eye=[0.3, 0, 0.6], target=[-0.1, 0, 0.1])
-        return CameraConfig(
-            "render_camera", pose=pose, width=512, height=512, fov=1, near=0.01, far=100
-        )
+        return CameraConfig("render_camera", pose=pose, width=512, height=512, fov=1, near=0.01, far=100)
 
     def _load_agent(self, options: dict):
         super()._load_agent(options, sapien.Pose(p=[-0.615, 0, 0]))
@@ -161,16 +146,12 @@ class PushTEnv(BaseEnv):
         self.ee_starting_pos3D = self.ee_starting_pos3D.to(self.device)
 
         # we use a prebuilt scene builder class that automatically loads in a floor and table.
-        self.table_scene = WhiteTableSceneBuilder(
-            env=self, robot_init_qpos_noise=self.robot_init_qpos_noise
-        )
+        self.table_scene = WhiteTableSceneBuilder(env=self, robot_init_qpos_noise=self.robot_init_qpos_noise)
         self.table_scene.build()
 
         # returns 3d cad of create_tee - center of mass at (0,0,0)
         # cad Tee is upside down (both 3D tee and target)
-        TARGET_RED = (
-            np.array([194, 19, 22, 255]) / 255
-        )  # same as mani_skill.utils.building.actors.common - goal target
+        TARGET_RED = np.array([194, 19, 22, 255]) / 255  # same as mani_skill.utils.building.actors.common - goal target
 
         def create_tee(name="tee", target=False, base_color=TARGET_RED):
             # dimensions of boxes that make tee
@@ -246,9 +227,7 @@ class PushTEnv(BaseEnv):
         builder.add_cylinder_visual(
             radius=0.02,
             half_length=1e-4,
-            material=sapien.render.RenderMaterial(
-                base_color=np.array([128, 128, 128, 255]) / 255
-            ),
+            material=sapien.render.RenderMaterial(base_color=np.array([128, 128, 128, 255]) / 255),
         )
         builder.initial_pose = sapien.Pose(p=[0, 0, 0.1])
         self.ee_goal_pos = builder.build_kinematic(name="goal_ee")
@@ -258,17 +237,12 @@ class PushTEnv(BaseEnv):
         uv_half_width = 0.15
         self.uv_half_width = uv_half_width
         self.res = res
-        oned_grid = torch.arange(res, dtype=torch.float32).view(1, res).repeat(
-            res, 1
-        ) - (res / 2)
-        self.uv_grid = (
-            torch.cat([oned_grid.unsqueeze(0), (-1 * oned_grid.T).unsqueeze(0)], dim=0)
-            + 0.5
-        ) / ((res / 2) / uv_half_width)
-        self.uv_grid = self.uv_grid.to(self.device)
-        self.homo_uv = torch.cat(
-            [self.uv_grid, torch.ones_like(self.uv_grid[0]).unsqueeze(0)], dim=0
+        oned_grid = torch.arange(res, dtype=torch.float32).view(1, res).repeat(res, 1) - (res / 2)
+        self.uv_grid = (torch.cat([oned_grid.unsqueeze(0), (-1 * oned_grid.T).unsqueeze(0)], dim=0) + 0.5) / (
+            (res / 2) / uv_half_width
         )
+        self.uv_grid = self.uv_grid.to(self.device)
+        self.homo_uv = torch.cat([self.uv_grid, torch.ones_like(self.uv_grid[0]).unsqueeze(0)], dim=0)
 
         # tee render
         # tee is made of two different boxes, and then translated by center of mass
@@ -276,12 +250,8 @@ class PushTEnv(BaseEnv):
             0,
             0.0375,
         )  # in frame of upside tee with center of horizontal box (add cetner of mass to get to real tee frame)
-        box1 = torch.tensor(
-            [[-0.1, 0.025], [0.1, 0.025], [-0.1, -0.025], [0.1, -0.025]]
-        )
-        box2 = torch.tensor(
-            [[-0.025, 0.175], [0.025, 0.175], [-0.025, 0.025], [0.025, 0.025]]
-        )
+        box1 = torch.tensor([[-0.1, 0.025], [0.1, 0.025], [-0.1, -0.025], [0.1, -0.025]])
+        box2 = torch.tensor([[-0.025, 0.175], [0.025, 0.175], [-0.025, 0.025], [0.025, 0.025]])
         box1[:, 1] -= self.center_of_mass[1]
         box2[:, 1] -= self.center_of_mass[1]
 
@@ -302,12 +272,8 @@ class PushTEnv(BaseEnv):
         # image map y is flipped of xy plane, flip to unflip
         self.tee_render = self.tee_render.flip(0).to(self.device)
 
-        goal_fake_quat = torch.tensor(
-            [(torch.tensor([self.goal_z_rot]) / 2).cos(), 0, 0, 0.0]
-        ).unsqueeze(0)
-        zrot = self.quat_to_zrot(goal_fake_quat).squeeze(
-            0
-        )  # 3x3 rot matrix for goal to world transform
+        goal_fake_quat = torch.tensor([(torch.tensor([self.goal_z_rot]) / 2).cos(), 0, 0, 0.0]).unsqueeze(0)
+        zrot = self.quat_to_zrot(goal_fake_quat).squeeze(0)  # 3x3 rot matrix for goal to world transform
         goal_trans = torch.eye(3)
         goal_trans[:2, :2] = zrot[:2, :2]
         goal_trans[0:2, 2] = self.goal_offset
@@ -349,17 +315,11 @@ class PushTEnv(BaseEnv):
         # we are given T_{g->w} where g == goal frame and w == world frame
         # applying T_{a->w} and then T_{w->g}, we get the actor's orientation in the goal tee's frame
         # T_{w->g} is T_{g->w}^{-1}, we already have the goal's orientation, and it doesn't change
-        tee_to_world_trans = self.quat_to_zrot(
-            self.tee.pose.q
-        )  # should be (b,3,3) rot matrices
-        tee_to_world_trans[:, 0:2, 2] = self.tee.pose.p[
-            :, :2
-        ]  # should be (b,3,3) rigid trans matrices
+        tee_to_world_trans = self.quat_to_zrot(self.tee.pose.q)  # should be (b,3,3) rot matrices
+        tee_to_world_trans[:, 0:2, 2] = self.tee.pose.p[:, :2]  # should be (b,3,3) rigid trans matrices
 
         # these matrices convert egocentric 3d tee to 2d goal tee frame
-        tee_to_goal_trans = (
-            self.world_to_goal_trans @ tee_to_world_trans
-        )  # should be (b,3,3) rigid trans matrices
+        tee_to_goal_trans = self.world_to_goal_trans @ tee_to_world_trans  # should be (b,3,3) rigid trans matrices
 
         # making homogenious coords of uv map to apply transformations to view tee in goal tee frame
         b = tee_to_world_trans.shape[0]
@@ -367,13 +327,9 @@ class PushTEnv(BaseEnv):
         homo_uv = self.homo_uv
 
         # finally, get uv coordinates of tee in goal tee frame
-        tees_in_goal_frame = (tee_to_goal_trans @ homo_uv.view(3, -1)).view(
-            b, 3, res, res
-        )
+        tees_in_goal_frame = (tee_to_goal_trans @ homo_uv.view(3, -1)).view(b, 3, res, res)
         # convert from homogenious coords to normal coords
-        tees_in_goal_frame = tees_in_goal_frame[:, 0:2, :, :] / tees_in_goal_frame[
-            :, -1, :, :
-        ].unsqueeze(
+        tees_in_goal_frame = tees_in_goal_frame[:, 0:2, :, :] / tees_in_goal_frame[:, -1, :, :].unsqueeze(
             1
         )  #  now (b,2,res,res)
 
@@ -381,25 +337,19 @@ class PushTEnv(BaseEnv):
         # we just extract the indices in the uv map where the egocentic T is, to get the transformed T coords
         # this works because while we transformed the coordinates of the uv map -
         # the indices where the egocentric T is is still the indices of the T in the uv map (indices of uv map never chnaged, just values)
-        tee_coords = tees_in_goal_frame[:, :, self.tee_render == 1].view(
-            b, 2, -1
-        )  #  (b,2,num_points_in_tee)
+        tee_coords = tees_in_goal_frame[:, :, self.tee_render == 1].view(b, 2, -1)  #  (b,2,num_points_in_tee)
 
         # convert tee_coords to indices - this is basically a batch of indices - same shape as tee_coords
         # this is the inverse function of creating the uv map from image indices used in load_scene
         tee_indices = (
-            (tee_coords * ((res / 2) / self.uv_half_width) + (res / 2))
-            .long()
-            .view(b, 2, -1)
+            (tee_coords * ((res / 2) / self.uv_half_width) + (res / 2)).long().view(b, 2, -1)
         )  #  (b,2,num_points_in_tee)
 
         # setting all of our work in image format to compare with egocentric image of goal T
         final_renders = torch.zeros(b, res, res).to(self.device)
         # for batch indexing
         num_tee_pixels = tee_indices.shape[-1]
-        batch_indices = (
-            torch.arange(b).view(-1, 1).repeat(1, num_tee_pixels).to(self.device)
-        )
+        batch_indices = torch.arange(b).view(-1, 1).repeat(1, num_tee_pixels).to(self.device)
 
         # # ensure no out of bounds indexing - it's fine to not fully 'render' tee, just need to fully see goal tee which is insured
         # # because we are in the goal tee frame, and 'cad' tee render setup of egocentric view includes full tee
@@ -418,9 +368,7 @@ class PushTEnv(BaseEnv):
         final_renders = final_renders.permute(0, 2, 1).flip(1)
 
         # finally, we can calculate intersection/goal_area for reward
-        intersection = (
-            (final_renders.bool() & self.tee_render.bool()).sum(dim=[-1, -2]).float()
-        )
+        intersection = (final_renders.bool() & self.tee_render.bool()).sum(dim=[-1, -2]).float()
         goal_area = self.tee_render.bool().sum().float()
 
         reward = intersection / goal_area
@@ -450,16 +398,10 @@ class PushTEnv(BaseEnv):
 
             # randomization code that randomizes the x, y position of the tee we
             # goal tee is alredy at y = -0.1 relative to robot, so we allow the tee to be only -0.2 y relative to robot arm
-            target_region_xyz[..., 0] += (
-                torch.rand(b) * (self.tee_spawnbox_xlength) + self.tee_spawnbox_xoffset
-            )
-            target_region_xyz[..., 1] += (
-                torch.rand(b) * (self.tee_spawnbox_ylength) + self.tee_spawnbox_yoffset
-            )
+            target_region_xyz[..., 0] += torch.rand(b) * (self.tee_spawnbox_xlength) + self.tee_spawnbox_xoffset
+            target_region_xyz[..., 1] += torch.rand(b) * (self.tee_spawnbox_ylength) + self.tee_spawnbox_yoffset
 
-            target_region_xyz[..., 2] = (
-                0.04 / 2 + 1e-3
-            )  # this is the half thickness of the tee plus a little
+            target_region_xyz[..., 2] = 0.04 / 2 + 1e-3  # this is the half thickness of the tee plus a little
             # rotation for pose is just random rotation around z axis
             # z axis rotation euler to quaternion = [cos(theta/2),0,0,sin(theta/2)]
             q_euler_angle = torch.rand(b) * (2 * torch.pi)

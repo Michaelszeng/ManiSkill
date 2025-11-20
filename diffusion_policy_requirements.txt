@@ -1,0 +1,9 @@
+dill==0.3.5.1
+hydra-core==1.2.0
+pandas
+zarr==2.12.0
+diffusers==0.11.1
+huggingface_hub<0.20
+robomimic==0.3.0
+einops==0.4.1
+

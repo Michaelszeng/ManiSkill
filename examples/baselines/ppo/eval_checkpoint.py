@@ -7,8 +7,58 @@ import numpy as np
 import torch
 from ppo_fast import Agent  # Now we can import directly since we're in the same directory
 
+
+def extract_state(obs, state_mode):
+    """
+    Extract robot state from flattened observation.
+
+    For PushT-v1 with obs_mode="state", the flattened observation structure is:
+    - qpos: indices 0:7 (robot joint positions)
+    - qvel: indices 7:14 (robot joint velocities)
+    - tcp_pose: indices 14:21 (end-effector pose: position + quaternion)
+    - goal_pos: indices 21:24 (goal position)
+    - obj_pose: indices 24:31 (object pose: position + quaternion)
+
+    Args:
+        obs: Flattened observation tensor of shape [num_envs, 31]
+        state_mode: One of "qpos", "qpos_qvel", "tcp_pose"
+
+    Returns:
+        state: numpy array of robot state
+    """
+    if state_mode == "qpos_qvel":
+        # Extract qpos (0:7) and qvel (7:14)
+        qpos = obs[:, 0:7]
+        qvel = obs[:, 7:14]
+        # print(f"qpos: {qpos}")
+        # print(f"qvel: {qvel}")
+        if isinstance(qpos, torch.Tensor):
+            return torch.cat([qpos, qvel], dim=-1)
+        else:
+            return np.concatenate([qpos, qvel], axis=-1)
+    elif state_mode == "qpos":
+        # Extract only qpos (0:7)
+        state = obs[:, 0:7]
+        # print(f"qpos: {state}")
+        if isinstance(state, torch.Tensor):
+            return state
+        else:
+            return state
+    elif state_mode == "tcp_pose":
+        # Extract tcp_pose (14:21)
+        state = obs[:, 14:21]
+        # print(f"tcp_pose: {state}")
+        if isinstance(state, torch.Tensor):
+            return state
+        else:
+            return state
+    else:
+        raise ValueError(f"Unknown state mode: {state_mode}")
+
+
 # Configuration
-control_mode = "pd_joint_delta_pos"
+# control_mode = "pd_joint_delta_pos"
+control_mode = "pd_ee_delta_pos"
 checkpoint_path = f"/home/michzeng/.maniskill/demos/PushT-v1/rl/ppo_{control_mode}_ckpt.pt"
 env_id = "PushT-v1"
 num_episodes = 5
@@ -67,9 +117,15 @@ for episode in range(num_episodes):
         with torch.no_grad():
             # Use actor_mean for deterministic actions (no exploration)
             action = agent.actor_mean(obs)
+            # Get value function output
+            value = agent.get_value(obs)
 
+        print(f"action (shape: {action.shape}): {action}")
+        print(f"value function: {value[0].item():.4f}")
         obs, reward, terminated, truncated, info = env.step(action)
-        print(f"info: {info}")
+        # print(f"info: {info}")
+        state = extract_state(obs, "qpos_qvel")
+        print(f"qpos_qvel (shape: {state.shape}): {state}")
         env.render()  # Explicitly render each step
         time.sleep(0.01)  # Small delay to see the motion
 
@@ -78,7 +134,8 @@ for episode in range(num_episodes):
         step += 1
 
     print(
-        f"Episode {episode + 1}: Reward = {episode_reward:.2f}, Steps = {step}, Success: {info.get('success', [False])[0]}"
+        f"Episode {episode + 1}: Reward = {episode_reward:.2f}, Steps = {step}, "
+        f"Success: {info.get('success', [False])[0]}"
     )
 
 env.close()
