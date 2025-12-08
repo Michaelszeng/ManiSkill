@@ -21,9 +21,7 @@ class PandaStick(BaseAgent):
     urdf_config = dict()
     keyframes = dict(
         rest=Keyframe(
-            qpos=np.array(
-                [0.0, np.pi / 8, 0, -np.pi * 5 / 8, 0, np.pi * 3 / 4, np.pi / 4]
-            ),
+            qpos=np.array([0.0, np.pi / 8, 0, -np.pi * 5 / 8, 0, np.pi * 3 / 4, np.pi / 4]),
             pose=sapien.Pose(),
         )
     )
@@ -165,13 +163,9 @@ class PandaStick(BaseAgent):
         return deepcopy_dict(controller_configs)
 
     def _after_init(self):
-        self.tcp = sapien_utils.get_obj_by_name(
-            self.robot.get_links(), self.ee_link_name
-        )
+        self.tcp = sapien_utils.get_obj_by_name(self.robot.get_links(), self.ee_link_name)
 
-        self.queries: dict[
-            str, Tuple[physx.PhysxGpuContactPairImpulseQuery, Tuple[int]]
-        ] = dict()
+        self.queries: dict[str, Tuple[physx.PhysxGpuContactPairImpulseQuery, Tuple[int]]] = dict()
 
     def is_static(self, threshold: float = 0.2):
         qvel = self.robot.get_qvel()[..., :-2]
