@@ -5,13 +5,13 @@ from .pick_clutter_ycb import PickClutterYCBEnv
 from .pick_cube import PickCubeEnv
 from .pick_single_ycb import PickSingleYCBEnv
 from .place_sphere import PlaceSphereEnv
+from .planar_push_t import PlanarPushTEnv
 from .plug_charger import PlugChargerEnv
 from .poke_cube import PokeCubeEnv
 from .pull_cube import PullCubeEnv
 from .pull_cube_tool import PullCubeToolEnv
 from .push_cube import PushCubeEnv
 from .push_t import PushTEnv
-from .push_t_v2 import PushTEnv as PushTEnvV2
 from .roll_ball import RollBallEnv
 from .stack_cube import StackCubeEnv
 from .stack_pyramid import StackPyramidEnv

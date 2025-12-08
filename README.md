@@ -12,6 +12,22 @@ pip install -r diffusion_policy_requirements.txt
 
 ### Useful Commands:
 
+Train PPO policy:
+```bash
+python examples/baselines/ppo/ppo_fast.py \
+  --env_id="Planar-PushT-v1" \
+  --num_envs=4096 \
+  --num-steps=16 \
+  --update_epochs=8 \
+  --num_minibatches=32 \
+  --gamma=0.99 \
+  --total_timesteps=100_000_000 \
+  --num_eval_steps=100 \
+  --num_eval_envs=16 \
+  --control_mode=pd_ee_delta_pose \
+  --cudagraphs
+```
+
 Generate data from PPO checkpoint (note: you must convert to rgb dataset using the command below after running this):
 ```bash
 python examples/baselines/ppo/ppo_fast.py \
@@ -31,7 +47,7 @@ Note: with `eval-partial-reset`, the policy will terminate and reset immediately
 Regenerate Dataset with RGB observations (add `--count <n>` to limit the number of episodes replayed):
 ```bash
 python -m mani_skill.trajectory.replay_trajectory \
-    --traj-path /home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory.none.pd_joint_delta_pos.physx_cuda.h5 \
+    --traj-path /home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory.none.pd_ee_delta_pos.physx_cuda.h5 \
     -o rgb \
     -b physx_cuda \
     -n 16 \
@@ -43,7 +59,7 @@ python -m mani_skill.trajectory.replay_trajectory \
 Replay Dataset (just to visualize):
 ```bash
 python -m mani_skill.trajectory.replay_trajectory \
-    --traj-path /home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory.none.pd_joint_delta_pos.physx_cuda.h5 \
+    --traj-path /home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5 \
     -b physx_cuda \
     --vis \
     --use-env-states \

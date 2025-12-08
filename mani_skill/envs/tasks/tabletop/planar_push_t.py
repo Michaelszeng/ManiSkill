@@ -60,8 +60,8 @@ class WhiteTableSceneBuilder(TableSceneBuilder):
                 triangle.material.set_roughness_texture(None)
 
 
-@register_env("PushT-v2", max_episode_steps=100)
-class PushTEnv(BaseEnv):
+@register_env("Planar-PushT-v1", max_episode_steps=100)
+class PlanarPushTEnv(BaseEnv):
     """
     **Task Description:**
     A simulated version of the real-world push-T task from Diffusion Policy: https://diffusion-policy.cs.columbia.edu/
