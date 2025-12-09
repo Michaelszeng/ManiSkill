@@ -120,8 +120,7 @@ class PlanarPushTEnv(BaseEnv):
         self.robot_init_qpos_noise = robot_init_qpos_noise
 
         # Initialize constraint targets before super().__init__() which calls reset()
-        # self._target_quat = None
-        self._target_quat = torch.tensor([0, 1, 0, 0])
+        self._target_quat = torch.tensor([0, 1, 0, 0], dtype=torch.float32)
         self._target_z = 0.02
 
         # Use pd_ee_delta_pose to control BOTH position AND orientation
@@ -156,29 +155,31 @@ class PlanarPushTEnv(BaseEnv):
         full_action[:, :2] = action
 
         # Compute corrections to maintain fixed z-height and vertical orientation
-        if self._target_quat is not None and self._target_z is not None:
-            # Get current end effector pose
-            current_pos = self.agent.tcp.pose.p  # (batch, 3)
-            current_quat = self.agent.tcp.pose.q  # (batch, 4)
+        # Get current end effector pose
+        current_pos = self.agent.tcp.pose.p  # (batch, 3)
+        current_quat = self.agent.tcp.pose.q  # (batch, 4)
 
-            # Compute z-height correction
-            z_error = self._target_z - current_pos[:, 2]
-            full_action[:, 2] = z_error  # Correct z-height
+        # Compute z-height correction
+        z_error = self._target_z - current_pos[:, 2]
+        full_action[:, 2] = z_error  # Correct z-height
 
-            # Compute orientation correction to maintain vertical orientation
-            # Convert quaternions to rotation matrices
-            current_mat = quaternion_to_matrix(current_quat)  # (batch, 3, 3)
-            target_mat = quaternion_to_matrix(self._target_quat)  # (batch, 3, 3)
+        # Compute orientation correction to maintain vertical orientation
+        # Convert quaternions to rotation matrices
+        current_mat = quaternion_to_matrix(current_quat)  # (batch, 3, 3)
 
-            # Compute rotation error: R_error = R_target * R_current^T
-            current_mat_T = current_mat.transpose(-1, -2)
-            error_mat = target_mat @ current_mat_T
+        # Expand target quaternion to batch size and ensure it's on the correct device
+        target_quat_batched = self._target_quat.to(device=current_quat.device).unsqueeze(0).expand(batch_size, -1)
+        target_mat = quaternion_to_matrix(target_quat_batched)  # (batch, 3, 3)
 
-            # Convert error rotation matrix to euler angles (XYZ convention)
-            error_euler = matrix_to_euler_angles(error_mat, "XYZ")  # (batch, 3)
+        # Compute rotation error: R_error = R_target * R_current^T
+        current_mat_T = current_mat.transpose(-1, -2)
+        error_mat = target_mat @ current_mat_T
 
-            # Apply the full orientation correction (no clamping - let controller handle it)
-            full_action[:, 3:6] = -error_euler
+        # Convert error rotation matrix to euler angles (XYZ convention)
+        error_euler = matrix_to_euler_angles(error_mat, "XYZ")  # (batch, 3)
+
+        # Apply the full orientation correction (no clamping - let controller handle it)
+        full_action[:, 3:6] = -error_euler
 
         return full_action
 
@@ -469,38 +470,24 @@ class PlanarPushTEnv(BaseEnv):
             b = len(env_idx)
             self.table_scene.initialize(env_idx)
 
-            # Initialize batched target pose values from templates
-            if self._target_quat is None:
-                # First reset - create batched versions
-                self._target_quat = self.target_quat_template.to(self.device).unsqueeze(0).repeat(self.num_envs, 1)
-                self._target_z = torch.full((self.num_envs,), self.target_z_height, device=self.device)
-
-            # Now move the robot end effector to match the target pose
-            # Get current end effector xy position (we want to keep this, just fix z and orientation)
-            current_ee_pos = self.agent.tcp.pose.p
-
-            # Construct desired end effector pose: keep current xy, use target z and orientation
+            # Move robot so that its initial state matches the target z and orientation
+            # Only operate on the environments being reset (env_idx)
+            current_ee_pos = self.agent.tcp.pose.p[env_idx]
             desired_pos = current_ee_pos.clone()
             desired_pos[:, 2] = self._target_z
-            desired_quat = self._target_quat
-
+            desired_quat = self._target_quat.to(device=self.device).unsqueeze(0).expand(b, -1)
             # Use IK to compute joint positions that achieve this pose
             arm_controller = self.agent.controller.controllers["arm"]
-            to_base = arm_controller.root_link.pose.inv()
+            to_base = arm_controller.root_link.pose.inv()[env_idx]
             target_pose_world = Pose.create_from_pq(desired_pos, desired_quat)
             target_pose_base = to_base * target_pose_world
-
-            # Get current joint positions as initial guess
-            q0 = self.agent.robot.get_qpos()
-
-            # Compute IK
+            q0 = self.agent.robot.get_qpos()[env_idx]
             qpos_target = arm_controller.kinematics.compute_ik(
                 pose=target_pose_base,
-                q0=q0,
+                q0=q0,  # current joint positions as initial guess
                 is_delta_pose=False,
                 current_pose=None,
             )
-
             if qpos_target is not None:
                 # Set the robot to this configuration
                 self.agent.robot.set_qpos(qpos_target)
@@ -588,6 +575,18 @@ class PlanarPushTEnv(BaseEnv):
         tcp_to_push_pose = self.tee.pose.p - self.agent.tcp.pose.p
         tcp_to_push_pose_dist = torch.linalg.norm(tcp_to_push_pose, axis=1)
         reward += ((1 - torch.tanh(5 * tcp_to_push_pose_dist)).sqrt()) / 20
+
+        # giving robot a little help by rewarding it for having vertical end-effector
+        # Extract z-axis from end-effector orientation (3rd column of rotation matrix)
+        tcp_rot_mat = quaternion_to_matrix(self.agent.tcp.pose.q)
+        tcp_z_axis = tcp_rot_mat[:, :, 2]  # z-axis of end-effector in world frame
+        # Reward when z-axis points downward (toward world -z direction)
+        vertical_alignment = -tcp_z_axis[:, 2]  # negative z component, range [-1, 1]
+        vertical_alignment = torch.clamp((vertical_alignment + 1) / 2, 0, 1)  # normalize to [0, 1]
+        # Scale by proximity to tee to prevent exploitation
+        proximity_weight = 1 - torch.tanh(5 * tcp_to_push_pose_dist)
+        print(f"orientation reward: {vertical_alignment * proximity_weight / 50}")
+        reward += (vertical_alignment * proximity_weight) / 50
 
         # assign rewards to parallel environments that achieved success to the maximum of 3.
         reward[info["success"]] = 3

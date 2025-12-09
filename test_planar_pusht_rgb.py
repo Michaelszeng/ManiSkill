@@ -12,13 +12,8 @@ import mani_skill.envs
 
 
 def main():
-    print("=" * 60)
-    print("Testing PushT-v2 with RGB observations")
-    print("=" * 60)
-
     # Test with RGB observations
-    print("\nCreating PushT-v2 environment with RGB observations...")
-    env = gym.make("PushT-v2", num_envs=1, obs_mode="rgb", render_mode="human")
+    env = gym.make("Planar-PushT-v1", num_envs=1, obs_mode="rgb", render_mode="rgb_array")
 
     print("✓ Environment created!")
     print(f"  Action space: {env.action_space}")
@@ -88,7 +83,7 @@ def main():
         action = np.array([[0.01, -0.01]])
         obs, reward, terminated, truncated, info = env.step(action)
 
-        print(f"obs['extra']['tcp_pose']: {obs['extra']['tcp_pose']}")
+        # print(f"obs['extra']['tcp_pose']: {obs['extra']['tcp_pose']}")
 
         # Render the environment (returns 1 parallel envs)
         frame = env.render()
@@ -96,6 +91,9 @@ def main():
         if hasattr(frame, "cpu"):
             frame = frame.cpu().numpy()
         frames.append(frame)  # Take only first env
+
+        dense_reward = env.compute_dense_reward(obs, action, info)
+        print(f"dense reward: {dense_reward}")
 
         if i % 100 == 0:
             print(f"  Step {i}...")
