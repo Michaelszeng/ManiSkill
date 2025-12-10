@@ -110,14 +110,18 @@ class PlanarPushTEnv(BaseEnv):
 
     # T block design choices
     T_mass = 0.1
-    T_dynamic_friction = 0.2
-    T_static_friction = 0.2
+    T_dynamic_friction = 0.5
+    T_static_friction = 0.5
 
     # Planar constraint parameters
     fixed_ee_z_height = 0.024  # Fixed z-height for end effector (matching ee_starting_pos3D)
 
-    def __init__(self, *args, robot_uids="panda_stick", robot_init_qpos_noise=0.02, **kwargs):
+    def __init__(self, *args, robot_uids="panda_stick", robot_init_qpos_noise=0.02, intersection_thresh=None, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
+
+        # Allow intersection_thresh to be overridden via __init__
+        if intersection_thresh is not None:
+            self.intersection_thresh = intersection_thresh
 
         # Initialize constraint targets before super().__init__() which calls reset()
         self._target_quat = torch.tensor([0, 1.0, 0, 0], dtype=torch.float32)
@@ -130,6 +134,12 @@ class PlanarPushTEnv(BaseEnv):
         super().__init__(*args, robot_uids=robot_uids, **kwargs)
 
         # Override action space to be 2D (x, y only) for planar control
+        # NOTE: ACTION SPACE: [delta_x, delta_y] with nominal range [-1, 1]
+        # - These are DELTA POSITIONS (not absolute positions) for end-effector movement
+        # - Policy outputs can exceed [-1, 1] (e.g., PPO samples from unbounded Normal distribution)
+        # - Saved trajectories store the RAW policy outputs (may be > 1.0)
+        # - Controller clips to [-1, 1] then scales to [-0.05, 0.05] meters
+        #   (see _preprocess_action docstring for full details)
         self.single_action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         # Update the batched action space
         self.action_space = batch_space(self.single_action_space, self.num_envs)
@@ -141,6 +151,15 @@ class PlanarPushTEnv(BaseEnv):
         Input: (batch, 2) - [delta_x, delta_y]
         Output: (batch, 6) - [delta_x, delta_y, delta_z, rot_x, rot_y, rot_z]
                  where delta_z and rotations correct any drift from target height/orientation
+
+        ACTION SEMANTICS:
+        - Actions are 2D DELTA POSITIONS (not absolute positions) in world coordinates
+        - The action space is defined as Box(low=-1.0, high=1.0, shape=(2,))
+        - However, when saved to trajectory files (e.g., via --save-trajectory), the stored
+          actions may exceed the [-1, 1] range as they represent the actual delta positions
+          sent to the controller (potentially scaled/unnormalized)
+        - Actions are directly used as [delta_x, delta_y] commands to move the end-effector
+          in the planar (x-y) workspace
         """
         # Convert numpy array to torch tensor if needed
         if not isinstance(action, torch.Tensor):
