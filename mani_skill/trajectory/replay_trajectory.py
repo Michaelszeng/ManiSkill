@@ -208,23 +208,32 @@ def replay_parallelized_sim(args: Args, env: RecordEpisode, pbar, episodes, traj
                     # NOTE (stao): due to the high precision nature of some tasks even taking a single step in GPU simulation (in e.g. PushT-v1) can lead
                     # to some non-deterministic behaviors leading to some steps labeled with slightly wrong observations/rewards/success/fail data (1e-4 error).
                     # I unfortunately do not have a good solution for this apart from using the same number of parallel environments to replay demos as the original trajectory collection.
-                    env.base_env.set_state_dict(env_states_batch[t])
+                    # Set to the state AFTER this action (env_states_batch[0] is initial state, so state after action t is at index t+1)
+                    env.base_env.set_state_dict(env_states_batch[t + 1])
                 if args.vis:
                     env.base_env.render_human()
                 # if the elapsed_steps mark saved in the trajectory is reached for any env, flush that trajectory buffer
 
-                if args.save_traj:
-                    envs_to_flush = (t >= episode_lens - 1) & (~flushed_trajectories)
-                    flushed_trajectories |= envs_to_flush
-                    if envs_to_flush.sum() > 0:
-                        pbar.update(n=envs_to_flush.sum())
-                        if not args.allow_failure:
-                            if "success" in info:
-                                envs_to_flush &= (info["success"] == True).cpu().numpy()
-                        if args.discard_timeout:
-                            envs_to_flush &= (truncated == False).cpu().numpy()
-                        successful_replays += envs_to_flush.sum()
-                        env.flush_trajectory(env_idxs_to_flush=np.where(envs_to_flush)[0])
+                envs_to_flush = (t >= episode_lens - 1) & (~flushed_trajectories)
+                flushed_trajectories |= envs_to_flush
+                if envs_to_flush.sum() > 0:
+                    pbar.update(n=envs_to_flush.sum())
+                    # Filter by success/timeout only for trajectory saving
+                    envs_to_save = envs_to_flush.copy()
+                    if not args.allow_failure:
+                        if "success" in info:
+                            envs_to_save &= (info["success"] == True).cpu().numpy()
+                    if args.discard_timeout:
+                        envs_to_save &= (truncated == False).cpu().numpy()
+
+                    if args.save_traj and envs_to_save.sum() > 0:
+                        successful_replays += envs_to_save.sum()
+                        env.flush_trajectory(env_idxs_to_flush=np.where(envs_to_save)[0])
+
+                    if args.save_video and envs_to_flush.sum() > 0:
+                        # Flush videos for all completed episodes (don't filter by success for videos)
+                        # Note: flush_video doesn't support selective flushing, it flushes all collected frames
+                        env.flush_video()
         else:
             raise NotImplementedError(
                 "Replay with different control modes are not supported when replaying on GPU parallelized environments"
@@ -375,7 +384,6 @@ def _main(
     # Load associated json
     json_path = traj_path.replace(".h5", ".json")
     json_data = io_utils.load_json(json_path)
-    logger.info(f"[_main] Creating env with env_kwargs: {env_kwargs}")
     env = gym.make(env_id, **env_kwargs)
     if isinstance(env.action_space, gym.spaces.Dict):
         logger.warning(
@@ -449,7 +457,6 @@ def parse_args(args=None):
 
 
 def main(args: Args):
-    logger.info(f"[main] args.render_backend = {args.render_backend}")
     traj_path = args.traj_path
     # Load trajectory metadata json
     json_path = traj_path.replace(".h5", ".json")
@@ -582,10 +589,17 @@ def main(args: Args):
             )
 
     pbar.close()
-    print(
-        f"Replayed {replay_result.num_replays} episodes, "
-        f"{replay_result.successful_replays}/{replay_result.num_replays}={replay_result.successful_replays / replay_result.num_replays * 100:.2f}% demos saved"
-    )
+    print(f"\n{'=' * 60}")
+    print("Replay Summary:")
+    print(f"  Total episodes replayed: {replay_result.num_replays}")
+    if args.save_traj:
+        print(
+            f"  Trajectories saved: {replay_result.successful_replays}/{replay_result.num_replays} ({replay_result.successful_replays / replay_result.num_replays * 100:.2f}%)"
+        )
+    if args.save_video:
+        video_dir = os.path.dirname(args.traj_path)
+        print(f"  Videos saved to: {video_dir}")
+    print(f"{'=' * 60}\n")
 
 
 if __name__ == "__main__":

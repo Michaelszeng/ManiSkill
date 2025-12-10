@@ -4,11 +4,57 @@
 
 ### Install
 
+For display issues, run:
+```bash
+QT_QPA_PLATFORM=xcb
+```
+
+
 Clone my diffusion policy repo and install (along with required dependencies):
 ```bash
 pip install -e /home/michzeng/diffusion-policy --no-deps
 pip install -r diffusion_policy_requirements.txt
 ```
+
+### Trajectory Replay Visualization
+
+#### For State Observations (obs_mode='state')
+
+To visualize trajectories collected with GPU simulation, use CPU rendering backend:
+
+```bash
+python -m mani_skill.trajectory.replay_trajectory \
+    --traj-path <path-to-trajectory.h5> \
+    -b physx_cuda \
+    -r cpu \
+    --vis \
+    --use-env-states \
+    --count 20
+```
+
+Key points:
+- `-b physx_cuda`: Use GPU simulation (matches how trajectory was collected)
+- `-r cpu`: Use CPU rendering backend (required for interactive viewer with `--vis`)
+- `--vis`: Enable interactive visualization window
+- `--use-env-states`: Replay using environment states for exact reproduction
+
+#### For RGB Observations (obs_mode='rgb')
+
+Interactive visualization (`--vis`) is not supported for RGB trajectories with GPU simulation because camera rendering requires GPU backend. Instead, save videos:
+
+```bash
+python -m mani_skill.trajectory.replay_trajectory \
+    --traj-path <path-to-trajectory.rgb.h5> \
+    -b physx_cuda \
+    -n 16 \
+    --save-video \
+    --use-env-states \
+    --count 20
+```
+
+IMPORTANT: `-n` must be set to the same value as used during conversion.
+
+Videos will be saved to the same directory as the trajectory file.
 
 ### Useful Commands:
 
@@ -21,20 +67,25 @@ python examples/baselines/ppo/ppo_fast.py \
   --update_epochs=8 \
   --num_minibatches=32 \
   --gamma=0.99 \
-  --total_timesteps=100_000_000 \
+  --total_timesteps=1_000_000_000 \
   --num_eval_steps=100 \
   --num_eval_envs=16 \
   --control_mode=pd_ee_delta_pose \
   --cudagraphs
 ```
 
+Optionally (to continue training), add:
+```bash
+--checkpoint=/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765228643/final_ckpt.pt
+```
+
 Generate data from PPO checkpoint (note: you must convert to rgb dataset using the command below after running this):
 ```bash
 python examples/baselines/ppo/ppo_fast.py \
-  --env_id="PushT-v1" \
-  --control-mode="pd_ee_delta_pos" \
+  --env_id="Planar-PushT-v1" \
+  --control-mode="pd_ee_delta_pose" \
   --evaluate \
-  --checkpoint=/home/michzeng/.maniskill/demos/PushT-v1/rl/ppo_pd_ee_delta_pos_ckpt.pt \
+  --checkpoint=/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765298439/ckpt_9526.pt \
   --num_eval_envs=1 \
   --num-eval-steps=10000 \
   --save-trajectory \
@@ -47,23 +98,13 @@ Note: with `eval-partial-reset`, the policy will terminate and reset immediately
 Regenerate Dataset with RGB observations (add `--count <n>` to limit the number of episodes replayed):
 ```bash
 python -m mani_skill.trajectory.replay_trajectory \
-    --traj-path /home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory.none.pd_ee_delta_pos.physx_cuda.h5 \
+    --traj-path /home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765298439/test_videos/trajectory.none.pd_ee_delta_pose.physx_cuda.h5 \
     -o rgb \
     -b physx_cuda \
     -n 16 \
     --save-traj \
     --use-env-states \
     --allow-failure
-```
-
-Replay Dataset (just to visualize):
-```bash
-python -m mani_skill.trajectory.replay_trajectory \
-    --traj-path /home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory.rgb.pd_ee_delta_pos.physx_cuda.h5 \
-    -b physx_cuda \
-    --vis \
-    --use-env-states \
-    --count 3
 ```
 
 
