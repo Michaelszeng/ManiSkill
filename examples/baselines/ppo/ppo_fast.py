@@ -432,6 +432,8 @@ if __name__ == "__main__":
             "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
         )
         logger = Logger(log_wandb=args.track, tensorboard=writer)
+        # Create checkpoints directory
+        os.makedirs(f"runs/{run_name}/checkpoints", exist_ok=True)
     else:
         print("Running evaluation")
     n_act = math.prod(envs.single_action_space.shape)
@@ -537,7 +539,7 @@ if __name__ == "__main__":
                 print(f"\nEvaluation complete! Trajectories saved to: {eval_output_dir}")
                 break
         if args.save_model and iteration % args.eval_freq == 1:
-            model_path = f"runs/{run_name}/ckpt_{iteration}.pt"
+            model_path = f"runs/{run_name}/checkpoints/ckpt_{iteration}.pt"
             torch.save(agent.state_dict(), model_path)
             print(f"model saved to {model_path}")
         # Annealing the rate if instructed to do so.
@@ -595,7 +597,7 @@ if __name__ == "__main__":
         )
     if not args.evaluate:
         if args.save_model:
-            model_path = f"runs/{run_name}/final_ckpt.pt"
+            model_path = f"runs/{run_name}/checkpoints/final_ckpt.pt"
             torch.save(agent.state_dict(), model_path)
             print(f"model saved to {model_path}")
         logger.close()
