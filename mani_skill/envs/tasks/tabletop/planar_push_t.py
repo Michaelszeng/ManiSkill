@@ -60,7 +60,7 @@ class WhiteTableSceneBuilder(TableSceneBuilder):
                 triangle.material.set_roughness_texture(None)
 
 
-@register_env("Planar-PushT-v1", max_episode_steps=100)
+@register_env("Planar-PushT-v1", max_episode_steps=200)
 class PlanarPushTEnv(BaseEnv):
     """
     **Task Description:**

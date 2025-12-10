@@ -79,7 +79,7 @@ class Args:
     reconfiguration_freq: Optional[int] = None
     """how often to reconfigure the environment during training"""
     eval_reconfiguration_freq: Optional[int] = 1
-    """for benchmarking purposes we want to reconfigure the eval environment each reset to ensure objects are randomized in some tasks"""
+    """for benchmarking we reconfigure eval env each reset to ensure objects are randomized in some tasks"""
     eval_freq: int = 25
     """evaluation frequency in terms of iterations"""
     save_train_video_freq: Optional[int] = None
@@ -119,6 +119,8 @@ class Args:
     reward_scale: float = 1.0
     """Scale the reward by this factor"""
     finite_horizon_gae: bool = False
+    eval_temperature: float = 1.0
+    """temperature for action sampling during evaluation (>1 increases diversity, <1 decreases it, 0 uses mean)"""
 
     # to be filled in runtime
     batch_size: int = 0
@@ -502,9 +504,17 @@ if __name__ == "__main__":
             )
             for step_idx in range(args.num_eval_steps):
                 with torch.no_grad():
-                    eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(
-                        agent.actor_mean(eval_obs)
-                    )
+                    # Use temperature to control action diversity
+                    if args.eval_temperature == 0.0:
+                        # Deterministic: use mean action
+                        action = agent.actor_mean(eval_obs)
+                    else:
+                        # Stochastic: sample with temperature scaling
+                        action_mean = agent.actor_mean(eval_obs)
+                        action_logstd = agent.actor_logstd.expand_as(action_mean)
+                        action_std = torch.exp(action_logstd) * args.eval_temperature
+                        action = action_mean + action_std * torch.randn_like(action_mean)
+                    eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
                     if "final_info" in eval_infos:
                         mask = eval_infos["_final_info"]
                         num_episodes += mask.sum()

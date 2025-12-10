@@ -32,7 +32,7 @@ CONTROL_MODE = "pd_ee_delta_pose"
 OBS_MODE = "rgbd"
 # Must match training configuration
 STATE_MODE = "qpos_qvel"  # "qpos", "qpos_qvel", "tcp_pose"
-N_ACTION_STEPS = 2  # Action horizon
+N_ACTION_STEPS = 8  # Action horizon
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -59,7 +59,7 @@ def main():
         render_mode="human",  # This opens a visualization window
         control_mode=CONTROL_MODE,
         sim_backend="physx_cuda",
-        max_episode_steps=500,
+        max_episode_steps=200,
         intersection_thresh=0.75,
     )
     if env.render_mode != "human":
