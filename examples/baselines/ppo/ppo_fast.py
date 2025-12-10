@@ -84,8 +84,8 @@ class Args:
     """evaluation frequency in terms of iterations"""
     save_train_video_freq: Optional[int] = None
     """frequency to save training videos in terms of iterations"""
-    control_mode: Optional[str] = "pd_joint_delta_pos"
-    """the control mode to use for the environment"""
+    control_mode: Optional[str] = None
+    """the control mode to use for the environment. If None, uses the environment's default control mode."""
 
     # Algorithm specific arguments
     total_timesteps: int = 10000000
@@ -171,7 +171,7 @@ class Agent(nn.Module):
         action_mean = self.actor_mean(obs)
         action_logstd = self.actor_logstd.expand_as(action_mean)
         action_std = torch.exp(action_logstd)
-        probs = Normal(action_mean, action_std)
+        probs = Normal(action_mean, action_std, validate_args=False)
         if action is None:
             action = action_mean + action_std * torch.randn_like(action_mean)
         return action, probs.log_prob(action).sum(1), probs.entropy().sum(1), self.critic(obs)
@@ -332,9 +332,19 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
+    # Fix for CUDA cusolver error with orthogonal initialization
+    # Try using magma or default backend instead of cusolver
+    if device.type == "cuda":
+        try:
+            torch.backends.cuda.preferred_linalg_library("magma")
+        except (RuntimeError, AttributeError):
+            # If magma is not available, use default
+            torch.backends.cuda.preferred_linalg_library("default")
+
     ####### Environment setup #######
     env_kwargs = dict(obs_mode="state", render_mode="rgb_array", sim_backend="physx_cuda")
-    if args.control_mode is not None:
+    # Only override control_mode if explicitly provided and not empty
+    if args.control_mode is not None and args.control_mode != "":
         env_kwargs["control_mode"] = args.control_mode
     envs = gym.make(
         args.env_id,
@@ -524,6 +534,7 @@ if __name__ == "__main__":
                 cumulative_times["eval_time"] += eval_time
                 logger.add_scalar("time/eval_time", eval_time, global_step)
             if args.evaluate:
+                print(f"\nEvaluation complete! Trajectories saved to: {eval_output_dir}")
                 break
         if args.save_model and iteration % args.eval_freq == 1:
             model_path = f"runs/{run_name}/ckpt_{iteration}.pt"
