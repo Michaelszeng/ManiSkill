@@ -501,7 +501,9 @@ def main():
         "h5_file",
         nargs="?",
         # default="/home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory.none.pd_ee_delta_pos.physx_cuda.h5",
-        default="/home/michzeng/.maniskill/demos/PushT-v1/rl/test_videos/trajectory.h5",
+        # default="/home/michzeng/.maniskill/demos/PushT-v1/rl/test_videos/trajectory.h5",
+        # default="/home/michzeng/.maniskill/demos/PushT-v1/rl/trajectory_state_pd_ee_delta_pos_truncated_success_only.h5",
+        default="/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765298439/test_videos/trajectory.rgb.pd_ee_delta_pose.physx_cuda.h5",
         help="Path to the HDF5 trajectory file (default: trajectory.none.pd_ee_delta_pos.physx_cuda.h5)",
     )
     parser.add_argument(

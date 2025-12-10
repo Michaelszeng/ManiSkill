@@ -7,6 +7,8 @@ import numpy as np
 import torch
 from ppo_fast import Agent  # Now we can import directly since we're in the same directory
 
+import mani_skill.envs  # Required to register ManiSkill environments
+
 
 def extract_state(obs, state_mode):
     """
@@ -57,25 +59,29 @@ def extract_state(obs, state_mode):
 
 
 # Configuration
-# control_mode = "pd_joint_delta_pos"
-control_mode = "pd_ee_delta_pos"
-checkpoint_path = f"/home/michzeng/.maniskill/demos/PushT-v1/rl/ppo_{control_mode}_ckpt.pt"
-env_id = "PushT-v1"
+control_mode = "pd_ee_delta_pose"
+checkpoint_path = "/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765298439/checkpoints/ckpt_9526.pt"
+ENV_ID = "Planar-PushT-v1"
 num_episodes = 5
-seed = 1  # Set seed for reproducibility
+# Base seed for reproducibility - Episode N uses seed = SEED + N
+SEED = 1
 
-# Set random seeds for reproducibility
-np.random.seed(seed)
-torch.manual_seed(seed)
+# Set random seeds for reproducibility before environment creation
+np.random.seed(SEED)
+torch.manual_seed(SEED)
 if torch.cuda.is_available():
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)  # For multi-GPU setups
+    torch.cuda.manual_seed(SEED)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
 # Create a single environment with human rendering
+print(f"Creating environment with ENV_ID_: {ENV_ID}")
+print(f"ENV_ID_ repr: {repr(ENV_ID)}")
+from gymnasium.envs.registration import registry
+
+print(f"Registered envs with 'Push': {[k for k in registry.keys() if 'Push' in k]}")
 env = gym.make(
-    env_id,
+    ENV_ID,
     num_envs=1,
     obs_mode="state",
     render_mode="human",  # This opens a visualization window
@@ -102,7 +108,9 @@ print("Checkpoint loaded successfully!")
 # Run episodes
 for episode in range(num_episodes):
     # Reset with seed for reproducibility (seed increments for each episode)
-    obs, _ = env.reset(seed=seed + episode)
+    # Episode N uses seed = SEED + N (same as simple_inference.py)
+    episode_seed = SEED + episode
+    obs, _ = env.reset(seed=episode_seed)
     episode_reward = 0
     done = False
     step = 0
@@ -117,12 +125,16 @@ for episode in range(num_episodes):
         with torch.no_grad():
             # Use actor_mean for deterministic actions (no exploration)
             action = agent.actor_mean(obs)
+            # Clip action to [-1, 1]
+            # action = torch.clamp(action, -1.0, 1.0)
+
             # Get value function output
             value = agent.get_value(obs)
 
         print(f"action (shape: {action.shape}): {action}")
         print(f"value function: {value[0].item():.4f}")
         obs, reward, terminated, truncated, info = env.step(action)
+        print(f"obs (shape: {obs.shape}): {obs}")
         # print(f"info: {info}")
         state = extract_state(obs, "qpos_qvel")
         print(f"qpos_qvel (shape: {state.shape}): {state}")

@@ -22,12 +22,15 @@ sys.path.insert(0, str(DIFFUSION_POLICY_PATH))
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 
 # Configuration
-ENV_ID = "PushT-v1"
+ENV_ID = "Planar-PushT-v1"
 NUM_FAILURES_TO_STOP = 10
-CHECKPOINT = "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/latest.ckpt"
+CHECKPOINT = "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/epoch=425-val_loss=0.1048-val_ddim_mse=0.032148.ckpt"
+# CHECKPOINT = "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/epoch=205-val_loss=0.0770-val_ddim_mse=0.032566.ckpt"
+# CHECKPOINT = "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/epoch=095-val_loss=0.0661-val_ddim_mse=0.031664.ckpt"
+# CHECKPOINT = "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/latest.ckpt"
 # Must match training configuration
 STATE_MODE = "qpos_qvel"  # "qpos", "qpos_qvel", "tcp_pose"
-CONTROL_MODE = "pd_joint_delta_pos"  # "pd_ee_delta_pos"
+CONTROL_MODE = "pd_ee_delta_pose"
 N_ACTION_STEPS = 8  # Action horizon
 
 
@@ -137,19 +140,17 @@ def main():
     torch.manual_seed(SEED)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(SEED)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
     # Load policy
     print("Loading policy...")
     policy, cfg = load_policy(CHECKPOINT, device=DEVICE)
     n_obs_steps = cfg.n_obs_steps  # Number of observation history steps
-    n_action_steps = cfg.n_action_steps  # Number of action steps to predict
-    print(f"Policy config: obs_steps={n_obs_steps}, action_steps={n_action_steps}")
-    print(f"Action horizon (executing first N actions): {N_ACTION_STEPS}")
 
     # Action indexing: skip first (n_obs_steps - 1) actions for temporal alignment
     action_start_idx = n_obs_steps - 1
     action_end_idx = action_start_idx + N_ACTION_STEPS
-    print(f"Action indexing: taking actions[{action_start_idx}:{action_end_idx}] from predictions")
 
     # Enable interactive plotting mode
     plt.ion()
@@ -158,10 +159,13 @@ def main():
     print(f"Creating environment: {ENV_ID}")
     env = gym.make(
         ENV_ID,
-        obs_mode="rgbd",  # Get both state and camera images
+        num_envs=1,
+        obs_mode="rgbd",
+        render_mode="human",  # This opens a visualization window
         control_mode=CONTROL_MODE,
-        render_mode="human",
-        max_episode_steps=100,
+        sim_backend="physx_cuda",
+        max_episode_steps=500,
+        intersection_thresh=0.80,
     )
 
     # Find camera keys and expected image sizes from config
@@ -180,33 +184,30 @@ def main():
     while len(failed_episodes) < NUM_FAILURES_TO_STOP:
         # Seed each episode deterministically (episode 0 uses SEED, episode 1 uses SEED+1, etc.)
         episode_seed = SEED + episode
-        print(f"\n=== Episode {episode + 1} (seed={episode_seed}) ===")
+        print(f"\n=== Episode {episode + 1} ===")
         obs, _ = env.reset(seed=episode_seed)
 
         # Create observation history buffers
         state_buffer = deque(maxlen=n_obs_steps)
         image_buffers = {key: deque(maxlen=n_obs_steps) for key in camera_keys}
 
+        # Create action queue
+        action_queue = deque()
+
         # Initialize buffers with first observation
         # Extract once, then fill buffer with n_obs_steps copies
         state = extract_state(obs, STATE_MODE)
         images = {key: extract_and_process_image(obs, key) for key in camera_keys}
-
-        print(f"State shape: {state.shape}, mode: {STATE_MODE}")
-
-        # Fill buffers with initial observation
         for _ in range(n_obs_steps):
             state_buffer.append(state)
             for camera_key in camera_keys:
                 image_buffers[camera_key].append(images[camera_key])
 
-        action_queue = deque()
         episode_reward = 0
         step = 0
 
         terminated = False
         truncated = False
-
         while not (terminated or truncated):
             # Predict new actions when queue is empty
             if len(action_queue) == 0:
@@ -216,9 +217,6 @@ def main():
                         "agent_pos": torch.from_numpy(np.stack(list(state_buffer), axis=0)).unsqueeze(0).to(DEVICE),
                     }
                 }
-                # print(
-                #     f"obs_dict.agent_pos (shape: {obs_dict['obs']['agent_pos'].shape}): {obs_dict['obs']['agent_pos']}"
-                # )
 
                 # Add camera images
                 for camera_key in camera_keys:
@@ -228,7 +226,7 @@ def main():
                 ########################################################################################################
                 ### Debug: Display images from observation
                 ########################################################################################################
-                if True:  # Set to True to enable image visualization
+                if False:  # Set to True to enable image visualization
                     if debug_fig is None:
                         # Create figure on first use
                         debug_fig, axes = plt.subplots(
@@ -264,16 +262,15 @@ def main():
                     result = policy.predict_action(obs_dict, use_DDIM=True)
                     actions = result["action_pred"][0].cpu().numpy()
 
-                # print(
-                #     f"action chunk (shape: {actions[action_start_idx:action_end_idx].shape}): {actions[action_start_idx:action_end_idx]}"
-                # )
-
                 # Add actions to queue using proper indexing (skip first n_obs_steps-1 for temporal alignment)
                 for action in actions[action_start_idx:action_end_idx]:
                     action_queue.append(action)
 
             # Execute next action
             action = action_queue.popleft()
+            # Add batch dimension for vectorized environment (num_envs=1 expects shape [1, action_dim])
+            if action.ndim == 1:
+                action = action[np.newaxis, :]  # [action_dim] -> [1, action_dim]
             obs, reward, terminated, truncated, info = env.step(action)
 
             # Update observation buffers
@@ -308,29 +305,18 @@ def main():
             if isinstance(intersection_ratio, torch.Tensor):
                 intersection_ratio = intersection_ratio.item()
 
-            print(f"Step {step}: intersection={intersection_ratio:.4f} (need ≥0.90), success={success}")
+            print(f"Step {step}: intersection={intersection_ratio:.4f}, success={success}")
 
             if success:
                 print("✓ SUCCESS! T block aligned with 90%+ coverage!")
                 break
-
-        success = info.get("success", False)
-        # Convert success to bool if it's a tensor
-        if isinstance(success, torch.Tensor):
-            success = success.item()
-
-        # Get final intersection ratio
-        base_env = env.unwrapped
-        final_intersection = base_env.pseudo_render_intersection()
-        if isinstance(final_intersection, torch.Tensor):
-            final_intersection = final_intersection.item()
 
         if not success:
             failed_episodes.append(episode_seed)
 
         print(
             f"Episode finished: reward={episode_reward:.3f}, steps={step}, "
-            f"success={success}, final_intersection={final_intersection:.4f} "
+            f"success={success}, final_intersection={intersection_ratio:.4f} "
             f"(need ≥0.90), seed={episode_seed}"
         )
 
