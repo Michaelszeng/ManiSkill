@@ -81,8 +81,8 @@ class PandaStick(BaseAgent):
         )
         arm_pd_ee_delta_pose = PDEEPoseControllerConfig(
             joint_names=self.arm_joint_names,
-            pos_lower=-0.05,
-            pos_upper=0.05,
+            pos_lower=-0.05,  # SLOWED DOWN 2x
+            pos_upper=0.05,  # SLOWED DOWN 2x
             rot_lower=-0.1,
             rot_upper=0.1,
             stiffness=self.arm_stiffness,

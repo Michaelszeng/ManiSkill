@@ -23,11 +23,12 @@ import torch.nn as nn
 import torch.optim as optim
 import tqdm
 import tyro
-import wandb
 from tensordict import from_module
 from tensordict.nn import CudaGraphModule
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
+
+import wandb
 
 
 @dataclass
@@ -86,6 +87,10 @@ class Args:
     """frequency to save training videos in terms of iterations"""
     control_mode: Optional[str] = None
     """the control mode to use for the environment. If None, uses the environment's default control mode."""
+    render_mode: Optional[str] = None
+    """render mode for training environments. None = no rendering (fastest), 'sensors' = minimal, 'rgb_array' = full rendering (slow!)"""
+    eval_render_mode: str = "rgb_array"
+    """render mode for evaluation environments. Use 'rgb_array' if you want to save videos."""
 
     # Algorithm specific arguments
     total_timesteps: int = 10000000
@@ -135,6 +140,8 @@ class Args:
     """whether to use torch.compile."""
     cudagraphs: bool = False
     """whether to use cudagraphs on top of compile."""
+    debug: bool = False
+    """whether to print detailed timing information for debugging."""
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -194,6 +201,7 @@ class Logger:
 
 
 def gae(next_obs, next_done, container, final_values):
+    gae_start = time.perf_counter()
     # bootstrap value if not done
     next_value = get_value(next_obs).reshape(-1)
     lastgaelam = 0
@@ -224,13 +232,25 @@ def gae(next_obs, next_done, container, final_values):
 def rollout(obs, done):
     ts = []
     final_values = torch.zeros((args.num_steps, args.num_envs), device=device)
+    step_times = []
+    policy_times = []
+    env_step_times = []
+    logging_times = []
+
     for step in range(args.num_steps):
+        step_start = time.perf_counter()
+
         # ALGO LOGIC: action logic
+        policy_start = time.perf_counter()
         action, logprob, _, value = policy(obs=obs)
+        policy_times.append(time.perf_counter() - policy_start)
 
         # TRY NOT TO MODIFY: execute the game and log data.
+        env_start = time.perf_counter()
         next_obs, reward, next_done, infos = step_func(action)
+        env_step_times.append(time.perf_counter() - env_start)
 
+        logging_start = time.perf_counter()
         if "final_info" in infos:
             final_info = infos["final_info"]
             done_mask = infos["_final_info"]
@@ -240,6 +260,7 @@ def rollout(obs, done):
                 final_values[step, torch.arange(args.num_envs, device=device)[done_mask]] = agent.get_value(
                     infos["final_observation"][done_mask]
                 ).view(-1)
+        logging_times.append(time.perf_counter() - logging_start)
 
         ts.append(
             tensordict.TensorDict._new_unsafe(
@@ -256,14 +277,35 @@ def rollout(obs, done):
         # NOTE (stao): change here for gpu env
         obs = next_obs = next_obs
         done = next_done
+        step_times.append(time.perf_counter() - step_start)
+
     # NOTE (stao): need to do .to(device) i think? otherwise container.device is None, not sure if this affects anything
+    if args.debug:
+        total_policy_time = sum(policy_times)
+        total_env_time = sum(env_step_times)
+        total_logging_time = sum(logging_times)
+        total_step_time = sum(step_times)
+
+        print(f"  Rollout breakdown ({args.num_steps} steps):")
+        print(f"    Policy inference:  {total_policy_time:.4f}s ({total_policy_time / total_step_time * 100:.1f}%)")
+        print(f"    Env stepping:      {total_env_time:.4f}s ({total_env_time / total_step_time * 100:.1f}%)")
+        print(f"    Logging/metrics:   {total_logging_time:.4f}s ({total_logging_time / total_step_time * 100:.1f}%)")
+        print(f"    Total:             {total_step_time:.4f}s")
+
     container = torch.stack(ts, 0).to(device)
     return next_obs, done, container, final_values
 
 
 def update(obs, actions, logprobs, advantages, returns, vals):
+    update_start = time.perf_counter()
     optimizer.zero_grad()
+    zero_grad_time = time.perf_counter() - update_start
+
+    forward_start = time.perf_counter()
     _, newlogprob, entropy, newvalue = agent.get_action_and_value(obs, actions)
+    forward_pass_time = time.perf_counter() - forward_start
+
+    loss_calc_start = time.perf_counter()
     logratio = newlogprob - logprobs
     ratio = logratio.exp()
 
@@ -298,10 +340,27 @@ def update(obs, actions, logprobs, advantages, returns, vals):
 
     entropy_loss = entropy.mean()
     loss = pg_loss - args.ent_coef * entropy_loss + v_loss * args.vf_coef
+    loss_calculation_time = time.perf_counter() - loss_calc_start
 
+    backward_start = time.perf_counter()
     loss.backward()
+    backward_pass_time = time.perf_counter() - backward_start
+
+    grad_clip_start = time.perf_counter()
     gn = nn.utils.clip_grad_norm_(agent.parameters(), args.max_grad_norm)
+    gradient_clipping_time = time.perf_counter() - grad_clip_start
+
+    opt_step_start = time.perf_counter()
     optimizer.step()
+    optimizer_step_time = time.perf_counter() - opt_step_start
+
+    if args.debug:
+        print(f"    Optimizer zero_grad time: {zero_grad_time:.4f}s")
+        print(f"    Forward pass time: {forward_pass_time:.4f}s")
+        print(f"    Loss calculation time: {loss_calculation_time:.4f}s")
+        print(f"    Backward pass time: {backward_pass_time:.4f}s")
+        print(f"    Gradient clipping time: {gradient_clipping_time:.4f}s")
+        print(f"    Optimizer step time: {optimizer_step_time:.4f}s")
 
     return approx_kl, v_loss.detach(), pg_loss.detach(), entropy_loss.detach(), old_approx_kl, clipfrac, gn
 
@@ -344,22 +403,43 @@ if __name__ == "__main__":
             torch.backends.cuda.preferred_linalg_library("default")
 
     ####### Environment setup #######
-    env_kwargs = dict(obs_mode="state", render_mode="rgb_array", sim_backend="physx_cuda")
-    # Only override control_mode if explicitly provided and not empty
+    # Training environments
+    train_env_kwargs = dict(
+        obs_mode="state",
+        sim_backend="physx_cuda",
+        sensor_configs={},  # Disable all sensors for state-based training
+    )
+    if args.render_mode is not None:
+        train_env_kwargs["render_mode"] = args.render_mode
     if args.control_mode is not None and args.control_mode != "":
-        env_kwargs["control_mode"] = args.control_mode
+        train_env_kwargs["control_mode"] = args.control_mode
+
+    if args.debug:
+        print("\n=== Environment Configuration ===")
+        print(f"Training env kwargs: {train_env_kwargs}")
+        print(f"Num envs: {args.num_envs}")
+        print(f"Num steps: {args.num_steps}")
+        print("=================================\n")
+
     envs = gym.make(
         args.env_id,
         num_envs=args.num_envs if not args.evaluate else 1,
         reconfiguration_freq=args.reconfiguration_freq,
-        **env_kwargs,
+        **train_env_kwargs,
     )
+
+    # Evaluation environments
+    eval_env_kwargs = dict(obs_mode="state", sim_backend="physx_cuda")
+    if args.eval_render_mode is not None:
+        eval_env_kwargs["render_mode"] = args.eval_render_mode
+    if args.control_mode is not None and args.control_mode != "":
+        eval_env_kwargs["control_mode"] = args.control_mode
     eval_envs = gym.make(
         args.env_id,
         num_envs=args.num_eval_envs,
         reconfiguration_freq=args.eval_reconfiguration_freq,
         human_render_camera_configs=dict(shader_pack="default"),
-        **env_kwargs,
+        **eval_env_kwargs,
     )
     if isinstance(envs.action_space, gym.spaces.Dict):
         envs = FlattenActionSpaceWrapper(envs)
@@ -452,6 +532,9 @@ if __name__ == "__main__":
 
     ####### Agent #######
     agent = Agent(n_obs, n_act, device=device)
+    # Reset linalg library to default to avoid slowdowns in some environments
+    if device.type == "cuda":
+        torch.backends.cuda.preferred_linalg_library("default")
     if args.checkpoint:
         agent.load_state_dict(torch.load(args.checkpoint))
     # Make a version of agent with detached params
@@ -504,24 +587,24 @@ if __name__ == "__main__":
             )
             for step_idx in range(args.num_eval_steps):
                 with torch.no_grad():
-                    # Use temperature to control action diversity
-                    if args.eval_temperature == 0.0:
-                        # Deterministic: use mean action
-                        action = agent.actor_mean(eval_obs)
-                    else:
-                        # Stochastic: sample with temperature scaling
-                        action_mean = agent.actor_mean(eval_obs)
-                        action_logstd = agent.actor_logstd.expand_as(action_mean)
-                        action_std = torch.exp(action_logstd) * args.eval_temperature
-                        action = action_mean + action_std * torch.randn_like(action_mean)
-                    eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
+                    eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(
+                        agent.actor_mean(eval_obs)
+                    )
+                    # # Use temperature to control action diversity
+                    # # Use unified path to avoid CUDA graph recompilation from conditionals
+                    # action_mean = agent.actor_mean(eval_obs)
+                    # action_logstd = agent.actor_logstd.expand_as(action_mean)
+                    # action_std = torch.exp(action_logstd) * args.eval_temperature
+                    # # When temperature=0, this becomes deterministic (std=0)
+                    # action = action_mean + action_std * torch.randn_like(action_mean)
+                    # eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
                     if "final_info" in eval_infos:
                         mask = eval_infos["_final_info"]
                         num_episodes += mask.sum()
                         for k, v in eval_infos["final_info"]["episode"].items():
                             eval_metrics[k].append(v)
                 # Print progress every 100 steps or at the end
-                if (step_idx + 1) % 100 == 0 or step_idx == args.num_eval_steps - 1:
+                if (step_idx + 1) % 200 == 0 or step_idx == args.num_eval_steps - 1:
                     print(
                         f"  Eval progress: {step_idx + 1}/{args.num_eval_steps} steps, "
                         f"{num_episodes} episodes collected"
@@ -558,6 +641,10 @@ if __name__ == "__main__":
             lrnow = frac * args.learning_rate
             optimizer.param_groups[0]["lr"].copy_(lrnow)
 
+        iteration_start = time.perf_counter()
+        if args.debug:
+            print(f"\n=== Iteration {iteration} ===")
+
         torch.compiler.cudagraph_mark_step_begin()
         rollout_time = time.perf_counter()
         next_obs, next_done, container, final_values = rollout(next_obs, next_done)
@@ -567,24 +654,49 @@ if __name__ == "__main__":
 
         update_time = time.perf_counter()
         container = gae(next_obs, next_done, container, final_values)
+        gae_time = time.perf_counter() - update_time
+
+        if args.debug:
+            print(f"Total rollout time: {rollout_time:.4f}s")
+            print(f"Total GAE time: {gae_time:.4f}s")
+
         container_flat = container.view(-1)
 
+        update_time = time.perf_counter()
+
         # Optimizing the policy and value network
+        opt_start = time.perf_counter()
         clipfracs = []
         for epoch in range(args.update_epochs):
+            epoch_start = time.perf_counter()
+            if args.debug:
+                print(f"  Epoch {epoch + 1}/{args.update_epochs}")
             b_inds = torch.randperm(container_flat.shape[0], device=device).split(args.minibatch_size)
-            for b in b_inds:
+            for batch_idx, b in enumerate(b_inds):
+                batch_start = time.perf_counter()
                 container_local = container_flat[b]
 
                 out = update(container_local, tensordict_out=tensordict.TensorDict())
+                if args.debug:
+                    print(
+                        f"    Total minibatch {batch_idx + 1}/{len(b_inds)} time: {time.perf_counter() - batch_start:.4f}s"
+                    )
                 clipfracs.append(out["clipfrac"])
                 if args.target_kl is not None and out["approx_kl"] > args.target_kl:
+                    if args.debug:
+                        print(f"  Early stopping at epoch {epoch + 1} due to target KL")
                     break
-            else:
-                continue
-            break
+            if args.debug:
+                print(f"  Epoch time: {time.perf_counter() - epoch_start:.4f}s")
+            if args.target_kl is not None and out["approx_kl"] > args.target_kl:
+                break
+        optimization_time = time.perf_counter() - opt_start
         update_time = time.perf_counter() - update_time
         cumulative_times["update_time"] += update_time
+
+        iteration_time = time.perf_counter() - iteration_start
+        if args.debug:
+            print(f"=== Total iteration time: {iteration_time:.4f}s ===\n")
 
         logger.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
         logger.add_scalar("losses/value_loss", out["v_loss"].item(), global_step)

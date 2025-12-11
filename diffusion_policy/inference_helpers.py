@@ -353,6 +353,6 @@ class DiffusionPolicy:
                 print(f"Step {step}: intersection={intersection_ratio:.4f}, success={success}")
 
             if success:
-                print("✓ SUCCESS! T block aligned with 90%+ coverage!")
+                print("✓ SUCCESS!")
                 break
         return episode_reward, success, intersection_ratio, step

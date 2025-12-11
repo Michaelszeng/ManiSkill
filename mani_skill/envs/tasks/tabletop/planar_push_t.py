@@ -489,29 +489,6 @@ class PlanarPushTEnv(BaseEnv):
             b = len(env_idx)
             self.table_scene.initialize(env_idx)
 
-            # # Move robot so that its initial state matches the target z and orientation
-            # # Only operate on the environments being reset (env_idx)
-            # current_ee_pos = self.agent.tcp.pose.p[env_idx]
-            # desired_pos = current_ee_pos.clone()
-            # desired_pos[:, 2] = self._target_z
-            # desired_quat = self._target_quat.to(device=self.device).unsqueeze(0).expand(b, -1)
-            # # Use IK to compute joint positions that achieve this pose
-            # arm_controller = self.agent.controller.controllers["arm"]
-            # to_base = arm_controller.root_link.pose.inv()[env_idx]
-            # target_pose_world = Pose.create_from_pq(desired_pos, desired_quat)
-            # target_pose_base = to_base * target_pose_world
-            # q0 = self.agent.robot.get_qpos()[env_idx]
-            # qpos_target = arm_controller.kinematics.compute_ik(
-            #     pose=target_pose_base,
-            #     q0=q0,  # current joint positions as initial guess
-            #     is_delta_pose=False,
-            #     current_pose=None,
-            # )
-            # if qpos_target is not None:
-            #     # Set the robot to this configuration
-            #     self.agent.robot.set_qpos(qpos_target)
-            #     self.agent.robot.set_qvel(torch.zeros_like(qpos_target))
-
             # setting the goal tee position, which is fixed, offset from center, and slightly rotated
             target_region_xyz = torch.zeros((b, 3))
             target_region_xyz[:, 0] += self.goal_offset[0]
