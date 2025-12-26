@@ -20,7 +20,9 @@ pip install -r diffusion_policy_requirements.txt
 
 #### For State Observations (obs_mode='state')
 
-To visualize trajectories collected with GPU simulation, use CPU rendering backend:
+To visualize trajectories collected with GPU simulation, use CPU rendering backend..
+
+To visualize dataset without RGB images:
 
 ```bash
 python -m mani_skill.trajectory.replay_trajectory \
@@ -29,7 +31,18 @@ python -m mani_skill.trajectory.replay_trajectory \
     -r cpu \
     --vis \
     --use-env-states \
-    --count 20
+    --count 5
+```
+
+To visualize dataset with RGB images:
+
+```bash
+python -m mani_skill.trajectory.replay_trajectory \
+    --traj-path /home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765441128/checkpoints/test_videos/trajectory.rgb.pd_ee_delta_pose.physx_cuda.h5 \
+    -b physx_cuda \
+    --save-video \
+    --use-env-states \
+    --count 5
 ```
 
 Key points:
@@ -56,7 +69,7 @@ IMPORTANT: `-n` must be set to the same value as used during conversion.
 
 Videos will be saved to the same directory as the trajectory file.
 
-### Useful Commands:
+### Trianing a Diffusion Policy:
 
 Train PPO policy:
 ```bash
@@ -68,11 +81,14 @@ python examples/baselines/ppo/ppo_fast.py \
   --num_minibatches=32 \
   --gamma=0.99 \
   --total_timesteps=1_000_000_000 \
-  --num_eval_steps=100 \
+  --num_eval_steps=200 \
   --num_eval_envs=16 \
   --control_mode=pd_ee_delta_pose \
+  --ent-coef=0.005 \
   --cudagraphs
 ```
+
+Here, we used increased entropy to try to maintain a more stochastic/diverse policy
 
 Optionally (to continue training), add:
 ```bash
@@ -85,15 +101,18 @@ python examples/baselines/ppo/ppo_fast.py \
   --env_id="Planar-PushT-v1" \
   --control-mode="pd_ee_delta_pose" \
   --evaluate \
-  --checkpoint=/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765298439/ckpt_9526.pt \
+  --checkpoint=/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1766536544/checkpoints/final_ckpt.pt \
   --num_eval_envs=1 \
-  --num-eval-steps=10000 \
+  --num-eval-steps=1000000 \
   --save-trajectory \
   --no-capture-video \
-  --eval-partial-reset
+  --eval-partial-reset \
+  --eval-temperature=1.5
 ```
 Note: `num-eval-steps` is the number of times we call `step()` on the vectorized environment. So the total number of steps taken is `num-eval-steps * num_eval_envs`.
 Note: with `eval-partial-reset`, the policy will terminate and reset immediately upon success, but this only works with `num_eval_envs=1`.
+
+We also set `eval-temperature=1.5` to try to introduce more diversity into the data. Set to `0` for deterministic, mean evaluation.
 
 Regenerate Dataset with RGB observations (add `--count <n>` to limit the number of episodes replayed):
 ```bash
@@ -106,6 +125,8 @@ python -m mani_skill.trajectory.replay_trajectory \
     --use-env-states \
     --allow-failure
 ```
+
+Now, you are ready to use the resulting `.h5` and `.json` dataset to train a diffusion policy.
 
 
 

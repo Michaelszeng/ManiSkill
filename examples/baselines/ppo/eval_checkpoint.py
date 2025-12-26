@@ -1,4 +1,11 @@
-# eval_checkpoint.py - Evaluate a trained PPO checkpoint with human rendering
+"""
+Evaluate a trained PPO checkpoint
+
+Runs a fixed number of episodes and prints success statistics.
+
+Use FAST_MODE=True for fast evaluation (no rendering/video), False for human visualization.
+"""
+
 import math
 import time
 
@@ -59,10 +66,11 @@ def extract_state(obs, state_mode):
 
 
 # Configuration
+FAST_MODE = True  # True: 16 parallel envs, no rendering | False: 1 env with human rendering
 control_mode = "pd_ee_delta_pose"
-checkpoint_path = "/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765298439/checkpoints/ckpt_9526.pt"
+checkpoint_path = "/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1766536544/checkpoints/final_ckpt.pt"
 ENV_ID = "Planar-PushT-v1"
-num_episodes = 5
+num_episodes = 100
 # Base seed for reproducibility - Episode N uses seed = SEED + N
 SEED = 1
 
@@ -74,17 +82,21 @@ if torch.cuda.is_available():
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-# Create a single environment with human rendering
+# Create environment based on FAST_MODE
+num_envs = 16 if FAST_MODE else 1
+render_mode = None if FAST_MODE else "human"
+
 print(f"Creating environment with ENV_ID_: {ENV_ID}")
 print(f"ENV_ID_ repr: {repr(ENV_ID)}")
+print(f"FAST_MODE: {FAST_MODE} (num_envs={num_envs}, render_mode={render_mode})")
 from gymnasium.envs.registration import registry
 
 print(f"Registered envs with 'Push': {[k for k in registry.keys() if 'Push' in k]}")
 env = gym.make(
     ENV_ID,
-    num_envs=1,
+    num_envs=num_envs,
     obs_mode="state",
-    render_mode="human",  # This opens a visualization window
+    render_mode=render_mode,
     control_mode=control_mode,
     sim_backend="physx_cuda",
     max_episode_steps=500,
@@ -106,6 +118,9 @@ agent.eval()
 print("Checkpoint loaded successfully!")
 
 # Run episodes
+success_count = 0
+episode_rewards = []
+episode_steps = []
 for episode in range(num_episodes):
     # Reset with seed for reproducibility (seed increments for each episode)
     # Episode N uses seed = SEED + N (same as simple_inference.py)
@@ -115,11 +130,10 @@ for episode in range(num_episodes):
     done = False
     step = 0
 
-    # Render the initial state
-    env.render()
-    time.sleep(0.5)  # Give time for rendering to initialize
-
-    print(f"\nStarting Episode {episode + 1}...")
+    # Render the initial state (only in non-FAST_MODE)
+    if not FAST_MODE:
+        env.render()
+        time.sleep(0.1)  # Give time for rendering to initialize
 
     while not done:
         with torch.no_grad():
@@ -131,23 +145,65 @@ for episode in range(num_episodes):
             # Get value function output
             value = agent.get_value(obs)
 
-        print(f"action (shape: {action.shape}): {action}")
-        print(f"value function: {value[0].item():.4f}")
         obs, reward, terminated, truncated, info = env.step(action)
-        print(f"obs (shape: {obs.shape}): {obs}")
-        # print(f"info: {info}")
-        state = extract_state(obs, "qpos_qvel")
-        print(f"qpos_qvel (shape: {state.shape}): {state}")
-        env.render()  # Explicitly render each step
-        time.sleep(0.01)  # Small delay to see the motion
+
+        if not FAST_MODE:
+            print(f"action (shape: {action.shape}): {action}")
+            print(f"value function: {value[0].item():.4f}")
+            print(f"obs (shape: {obs.shape}): {obs}")
+            # print(f"info: {info}")
+            state = extract_state(obs, "qpos_qvel")
+            print(f"qpos_qvel (shape: {state.shape}): {state}")
+            env.render()  # Explicitly render each step
+            time.sleep(0.01)  # Small delay to see the motion
 
         done = terminated[0] or truncated[0]
         episode_reward += reward[0].item()
         step += 1
 
-    print(
-        f"Episode {episode + 1}: Reward = {episode_reward:.2f}, Steps = {step}, "
-        f"Success: {info.get('success', [False])[0]}"
-    )
+    # Track episode metrics
+    is_success = info.get("success", [False])[0]
+    episode_rewards.append(episode_reward)
+    episode_steps.append(step)
+
+    if is_success:
+        success_count += 1
+
+    print(f"Episode {episode + 1}: Reward = {episode_reward:.2f}, Steps = {step}, Success: {is_success}")
+
+# Calculate aggregate metrics
+total_reward = sum(episode_rewards)
+total_steps = sum(episode_steps)
+avg_reward = np.mean(episode_rewards)
+std_reward = np.std(episode_rewards)
+min_reward = np.min(episode_rewards)
+max_reward = np.max(episode_rewards)
+avg_steps = np.mean(episode_steps)
+std_steps = np.std(episode_steps)
+min_steps = np.min(episode_steps)
+max_steps = np.max(episode_steps)
+
+# Print comprehensive evaluation metrics
+print("\n" + "=" * 60)
+print("EVALUATION RESULTS")
+print("=" * 60)
+print(f"Checkpoint: {checkpoint_path}")
+print(f"Control Mode: {control_mode}")
+print(f"Number of Episodes: {num_episodes}")
+print("-" * 60)
+print(f"Success Rate: {success_count}/{num_episodes} ({100 * success_count / num_episodes:.1f}%)")
+print("-" * 60)
+print("REWARD STATISTICS:")
+print(f"  Total Reward: {total_reward:.2f}")
+print(f"  Average Reward: {avg_reward:.2f} ± {std_reward:.2f}")
+print(f"  Min Reward: {min_reward:.2f}")
+print(f"  Max Reward: {max_reward:.2f}")
+print("-" * 60)
+print("EPISODE LENGTH STATISTICS:")
+print(f"  Total Steps: {total_steps}")
+print(f"  Average Steps: {avg_steps:.2f} ± {std_steps:.2f}")
+print(f"  Min Steps: {min_steps}")
+print(f"  Max Steps: {max_steps}")
+print("=" * 60)
 
 env.close()
