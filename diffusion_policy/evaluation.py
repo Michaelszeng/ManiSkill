@@ -7,10 +7,9 @@ success rates for each. Shows a success rate vs action horizon plot at the end.
 """
 
 import sys
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List
 
 import dill
 import gymnasium as gym
@@ -20,7 +19,6 @@ import numpy as np
 import statsmodels.stats.proportion as smp
 import torch
 from inference_helpers import DiffusionPolicy
-from matplotlib.ticker import ScalarFormatter
 
 # Import ManiSkill to register environments
 import mani_skill.envs
@@ -49,139 +47,20 @@ class HorizonResult:
 
 # Configuration
 ENV_ID = "Planar-PushT-v1"
-NUM_TRIALS_PER_HORIZON = 1000
+NUM_TRIALS_PER_HORIZON = 16
 CONTROL_MODE = "pd_ee_delta_pose"
 OBS_MODE = "rgbd"
 # Must match training configuration
 STATE_MODE = "qpos_qvel"  # "qpos", "qpos_qvel", "tcp_pose"
 
-CHECKPOINTS = [
-    "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/epoch=075-val_loss=0.1215-val_ddim_mse=0.747608.ckpt",
-]
+# Specify folder containing checkpoint files (all .ckpt files will be evaluated)
+CHECKPOINTS_DIR = "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints"
 ACTION_HORIZONS = [1, 2, 3, 4, 5, 6, 7, 8]
 
 # Set to True for fast evaluation (no rendering/video), False for human visualization
 FAST_MODE = True
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-
-
-def make_action_horizon_plot(
-    results: List[HorizonResult], plot_name: str = "Action Horizon Comparison", dpi: int = 150
-) -> plt.Figure:
-    """Create plot showing success rate vs action horizon with checkpoint labels."""
-    # Plotting style constants
-    NAVY = "#1f3a68"
-    GRID_COLOR = "#e0e0e0"
-
-    def compute_wilson_ci(success_rates: np.ndarray, num_trials: np.ndarray) -> np.ndarray:
-        """Compute Wilson 95% confidence intervals and return as yerr format."""
-        ci_bounds = np.array(
-            [
-                smp.proportion_confint(int(p * n), n, alpha=0.05, method="wilson")
-                for p, n in zip(success_rates, num_trials)
-            ],
-            dtype=float,
-        )
-        ci_lo = ci_bounds[:, 0]
-        ci_hi = ci_bounds[:, 1]
-        # Return distances from central value for error bars
-        return np.vstack([np.clip(success_rates - ci_lo, 0, 1), np.clip(ci_hi - success_rates, 0, 1)])
-
-    fig, ax = plt.subplots(figsize=(5.0, 4.0))
-    ax.set_facecolor("white")
-
-    if not results:
-        print("Warning: No results to plot.")
-        return fig
-
-    # Sort by horizon
-    results = sorted(results, key=lambda r: r.horizon)
-
-    horizons = np.array([res.horizon for res in results], dtype=float)
-    success_rates = np.array([res.success_rate for res in results], dtype=float)
-    num_trials = np.array([res.num_trials for res in results], dtype=int)
-
-    # Compute error bars
-    yerr = compute_wilson_ci(success_rates, num_trials)
-
-    # Main line with markers
-    ax.plot(
-        horizons,
-        success_rates,
-        color=NAVY,
-        linewidth=1.5,
-        marker="o",
-        markersize=4,
-        markeredgecolor="white",
-        markeredgewidth=0.8,
-        zorder=3,
-    )
-
-    # Error bars with 95% Wilson CI
-    ax.errorbar(
-        horizons,
-        success_rates,
-        yerr=yerr,
-        fmt="none",
-        ecolor=NAVY,
-        elinewidth=1.0,
-        capsize=4.0,
-        capthick=1.0,
-        alpha=0.9,
-        zorder=2,
-    )
-
-    # Add checkpoint labels for each point
-    for res in results:
-        # Extract checkpoint name from path (e.g., "epoch=075-val_loss=0.1215...")
-        ckpt_path = Path(res.checkpoint_path)
-        ckpt_name = ckpt_path.stem if ckpt_path.suffix == ".ckpt" else ckpt_path.name
-
-        # Truncate checkpoint name to first 10 chars for readability
-        label_text = ckpt_name[:10] + "..." if len(ckpt_name) > 10 else ckpt_name
-
-        # Position label slightly above the data point
-        ax.annotate(
-            label_text,
-            xy=(res.horizon, res.success_rate),
-            xytext=(0, 5),  # 5 points above
-            textcoords="offset points",
-            fontsize=6,
-            color=NAVY,
-            ha="center",
-            va="bottom",
-            alpha=0.8,
-        )
-
-    # Configure x-axis
-    ax.set_xticks(horizons)
-    ax.set_xticklabels([str(int(val)) if float(val).is_integer() else f"{val:g}" for val in horizons])
-
-    # Configure y-axis
-    ax.set_ylim(0, 1.0)
-    ax.set_yticks(np.linspace(0, 1.0, 6))
-
-    # Labels and title
-    ax.set_title(plot_name, fontsize=12, fontweight="bold", pad=10)
-    ax.set_xlabel("Action Horizon (steps)", fontsize=12)
-    ax.set_ylabel("Success Rate", fontsize=12)
-
-    # Grid styling
-    ax.grid(True, which="major", color=GRID_COLOR, linestyle="-", linewidth=0.8, alpha=0.6)
-
-    # Spine styling
-    for spine in ax.spines.values():
-        spine.set_linewidth(1.0)
-        spine.set_color("#4f4f4f")
-
-    # Tick styling
-    ax.tick_params(axis="both", which="major", labelsize=8, length=6, width=1)
-
-    fig.tight_layout()
-    fig.set_dpi(dpi)
-
-    return fig
 
 
 def main():
@@ -191,6 +70,22 @@ def main():
     torch.manual_seed(SEED)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(SEED)
+
+    # Discover all checkpoint files in the specified directory
+    checkpoints_dir = Path(CHECKPOINTS_DIR)
+    if not checkpoints_dir.exists():
+        raise ValueError(f"Checkpoints directory does not exist: {CHECKPOINTS_DIR}")
+
+    checkpoints = sorted(checkpoints_dir.glob("*.ckpt"))
+    if not checkpoints:
+        raise ValueError(f"No .ckpt files found in directory: {CHECKPOINTS_DIR}")
+
+    # Convert to strings
+    CHECKPOINTS = [str(ckpt) for ckpt in checkpoints]
+    print(f"\nFound {len(CHECKPOINTS)} checkpoint(s) in {CHECKPOINTS_DIR}:")
+    for i, ckpt in enumerate(CHECKPOINTS, 1):
+        print(f"  {i}. {Path(ckpt).name}")
+    print()
 
     # Enable interactive plotting mode
     plt.ion()
@@ -226,7 +121,7 @@ def main():
     for checkpoint in CHECKPOINTS:
         for action_horizon in ACTION_HORIZONS:
             print(f"\n{'=' * 60}")
-            print(f"Evaluating Action Horizon: {action_horizon}")
+            print(f"Evaluating Action Horizon: {action_horizon} for checkpoint: {checkpoint}")
             print(f"{'=' * 60}")
 
             # Create policy with current action horizon
@@ -334,12 +229,24 @@ def main():
         )
     print(f"{'=' * 60}")
 
-    # Create and save plot
-    fig = make_action_horizon_plot(best_results, plot_name="Success Rate vs Action Horizon (Best Checkpoints)", dpi=150)
-    output_path = "success_rate_vs_action_horizon.png"
-    fig.savefig(output_path, dpi=150, bbox_inches="tight")
-    print(f"\nPlot saved to: {output_path}")
-    plt.show()
+    # Save results to pickle file
+    results_data = {
+        "best_results": best_results,
+        "full_results": results,
+        "config": {
+            "env_id": ENV_ID,
+            "num_trials_per_horizon": NUM_TRIALS_PER_HORIZON,
+            "control_mode": CONTROL_MODE,
+            "obs_mode": OBS_MODE,
+            "state_mode": STATE_MODE,
+            "checkpoints_dir": CHECKPOINTS_DIR,
+            "action_horizons": ACTION_HORIZONS,
+        },
+    }
+    output_pkl = "evaluation_results.pkl"
+    with open(output_pkl, "wb") as f:
+        dill.dump(results_data, f)
+    print(f"\nResults saved to: {output_pkl}")
 
     print("\nDone!")
 
