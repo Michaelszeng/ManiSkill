@@ -23,6 +23,10 @@ class DiffusionPolicy:
         self.n_action_steps = n_action_steps
         self.device = device
 
+        # Determine number of parallel environments
+        self.num_envs = getattr(env, "num_envs", 1)
+        print(f"Initializing policy for {self.num_envs} parallel environments")
+
         self.load_policy(checkpoint_path)
 
         # State observation slicing (for flat state observations)
@@ -31,16 +35,18 @@ class DiffusionPolicy:
         self.tee_pose_slice = (14, 21)  # obs[:, 14:21] - Tee position + quaternion
         self.tcp_pose_slice = None  # Only needed if STATE_MODE = "tcp_pose"
 
-        # Create observation history buffers
-        self.state_buffer = deque(maxlen=self.cfg.n_obs_steps)
-        self.image_buffers = {key: deque(maxlen=self.cfg.n_obs_steps) for key in self.camera_keys}
+        # Create observation history buffers (one per environment)
+        self.state_buffers = [deque(maxlen=self.cfg.n_obs_steps) for _ in range(self.num_envs)]
+        self.image_buffers = [
+            {key: deque(maxlen=self.cfg.n_obs_steps) for key in self.camera_keys} for _ in range(self.num_envs)
+        ]
 
         # For state obs mode, maintain buffer for tee_pose too
         if self.obs_mode == "state":
-            self.tee_pose_buffer = deque(maxlen=self.cfg.n_obs_steps)
+            self.tee_pose_buffers = [deque(maxlen=self.cfg.n_obs_steps) for _ in range(self.num_envs)]
 
-        # Create action buffer
-        self.action_queue = deque()
+        # Create action buffers (one per environment)
+        self.action_queues = [deque() for _ in range(self.num_envs)]
 
     def load_policy(self, checkpoint_path, device="cuda"):
         """Load a trained diffusion policy from checkpoint"""
@@ -83,7 +89,7 @@ class DiffusionPolicy:
         self.action_start_idx = self.cfg.n_obs_steps - 1
         self.action_end_idx = self.action_start_idx + self.n_action_steps
 
-    def extract_state(self, obs, state_mode, obs_mode):
+    def extract_state(self, obs, state_mode, obs_mode, env_idx=None):
         """
         Extract robot state from observation based on mode. Used in state mode only.
 
@@ -91,9 +97,10 @@ class DiffusionPolicy:
             obs: ManiSkill observation (dict for state_dict/rgbd modes, or flat tensor for state mode)
             state_mode: One of "qpos", "qpos_qvel", "tcp_pose"
             obs_mode: The observation mode used ("state", "state_dict", "rgbd", etc.)
+            env_idx: Index of environment to extract from (for vectorized envs). If None, returns all envs.
 
         Returns:
-            state: numpy array of robot state
+            state: numpy array of robot state (num_envs, state_dim) or (state_dim,) if env_idx is specified
         """
         # When obs_mode="state", ManiSkill returns a flattened tensor directly
         # Extract specific components based on state_mode
@@ -103,9 +110,15 @@ class DiffusionPolicy:
             else:
                 obs_np = np.array(obs)
 
-            # Squeeze batch dimension if present (e.g., [1, state_dim] -> [state_dim])
-            if obs_np.ndim == 2 and obs_np.shape[0] == 1:
-                obs_np = obs_np.squeeze(0)
+            # Handle batch dimension: keep it for vectorized envs
+            # obs_np shape: (num_envs, state_dim) for num_envs > 1, or (state_dim,) for num_envs = 1
+            if obs_np.ndim == 1:
+                # Single env, no batch dimension - reshape to (1, state_dim)
+                obs_np = obs_np[np.newaxis, :]
+
+            # Extract specific environment if requested
+            if env_idx is not None:
+                obs_np = obs_np[env_idx]
 
             # Extract relevant slice based on state_mode
             if state_mode == "qpos_qvel":
@@ -130,27 +143,47 @@ class DiffusionPolicy:
                     qpos = qpos.cpu().numpy()
                 if isinstance(qvel, torch.Tensor):
                     qvel = qvel.cpu().numpy()
+
+                # Handle batch dimension
+                if qpos.ndim == 1:
+                    qpos = qpos[np.newaxis, :]
+                    qvel = qvel[np.newaxis, :]
+                if env_idx is not None:
+                    qpos = qpos[env_idx]
+                    qvel = qvel[env_idx]
+
                 return np.concatenate([qpos, qvel], axis=-1)
             elif state_mode == "qpos":
                 state = obs["agent"]["qpos"]
                 if isinstance(state, torch.Tensor):
                     state = state.cpu().numpy()
+
+                if state.ndim == 1:
+                    state = state[np.newaxis, :]
+                if env_idx is not None:
+                    state = state[env_idx]
                 return state
             elif state_mode == "tcp_pose":
                 state = obs["extra"]["tcp_pose"]
                 if isinstance(state, torch.Tensor):
                     state = state.cpu().numpy()
+
+                if state.ndim == 1:
+                    state = state[np.newaxis, :]
+                if env_idx is not None:
+                    state = state[env_idx]
                 return state
             else:
                 raise ValueError(f"Unknown state mode: {state_mode}")
 
-    def extract_tee_pose(self, obs, obs_mode):
+    def extract_tee_pose(self, obs, obs_mode, env_idx=None):
         """
         Extract Tee pose from observation. Used in state mode only.
 
         Args:
             obs: ManiSkill observation (dict for state_dict/rgbd modes, or flat tensor for state mode)
             obs_mode: The observation mode used ("state", "state_dict", "rgbd", etc.)
+            env_idx: Index of environment to extract from (for vectorized envs). If None, returns all envs.
 
         Returns:
             tee_pose: numpy array of Tee pose [position(3) + quaternion(4)] = 7 dims
@@ -162,9 +195,12 @@ class DiffusionPolicy:
             else:
                 obs_np = np.array(obs)
 
-            # Squeeze batch dimension if present (e.g., [1, state_dim] -> [state_dim])
-            if obs_np.ndim == 2 and obs_np.shape[0] == 1:
-                obs_np = obs_np.squeeze(0)
+            # Handle batch dimension
+            if obs_np.ndim == 1:
+                obs_np = obs_np[np.newaxis, :]
+
+            if env_idx is not None:
+                obs_np = obs_np[env_idx]
 
             return obs_np[..., self.tee_pose_slice[0] : self.tee_pose_slice[1]]
 
@@ -173,24 +209,32 @@ class DiffusionPolicy:
         if "extra" in obs and "tee_pose" in obs["extra"]:
             tee_pose = obs["extra"]["tee_pose"]
             if isinstance(tee_pose, torch.Tensor):
-                return tee_pose.cpu().numpy()
-            return np.array(tee_pose)
+                tee_pose = tee_pose.cpu().numpy()
+            else:
+                tee_pose = np.array(tee_pose)
+
+            if tee_pose.ndim == 1:
+                tee_pose = tee_pose[np.newaxis, :]
+            if env_idx is not None:
+                tee_pose = tee_pose[env_idx]
+            return tee_pose
         else:
             raise ValueError(
                 "Cannot extract tee_pose from observation. "
                 "Tee pose should be in obs['extra']['tee_pose'] for non-state modes."
             )
 
-    def extract_and_process_image(self, obs, camera_key):
+    def extract_and_process_image(self, obs, camera_key, env_idx=None):
         """
         Extract and process camera image from observation. Used in rgbd mode only.
 
         Args:
             obs: ManiSkill observation dict
             camera_key: Name of camera to extract
+            env_idx: Index of environment to extract from (for vectorized envs). If None, returns all envs.
 
         Returns:
-            rgb: Processed image in C x H x W format, normalized to [0, 1]
+            rgb: Processed image in C x H x W format (or num_envs x C x H x W), normalized to [0, 1]
         """
         # Extract camera image from ManiSkill observation
         rgb = obs["sensor_data"][camera_key]["rgb"]
@@ -199,17 +243,30 @@ class DiffusionPolicy:
         if isinstance(rgb, torch.Tensor):
             rgb = rgb.cpu().numpy()
 
-        # Squeeze batch dimension if present: [1, H, W, C] -> [H, W, C]
-        if rgb.shape[0] == 1:
-            rgb = rgb.squeeze(0)
+        # Handle batch dimension
+        # rgb shape: (num_envs, H, W, C) for num_envs > 1, or (H, W, C) for num_envs = 1
+        is_batched = len(rgb.shape) == 4
 
-        # Transpose from H x W x C to C x H x W
-        if len(rgb.shape) == 3 and rgb.shape[-1] in [3, 4]:
+        if not is_batched:
+            # Single env: (H, W, C) -> add batch dim -> (1, H, W, C)
+            rgb = rgb[np.newaxis, ...]
+
+        # Extract specific environment if requested
+        if env_idx is not None:
+            rgb = rgb[env_idx]  # (H, W, C)
+            # Transpose from H x W x C to C x H x W
             rgb = np.transpose(rgb, (2, 0, 1))
+        else:
+            # Keep batch: (num_envs, H, W, C) -> (num_envs, C, H, W)
+            rgb = np.transpose(rgb, (0, 3, 1, 2))
 
-        # Take only RGB channels (in case of RGBA with C=4)
-        if rgb.shape[0] == 4:
-            rgb = rgb[:3]
+        # # Take only RGB channels (in case of RGBA with C=4)
+        # if env_idx is not None:
+        #     if rgb.shape[0] == 4:
+        #         rgb = rgb[:3]
+        # else:
+        #     if rgb.shape[1] == 4:
+        #         rgb = rgb[:, :3]
 
         # Normalize to [0, 1] range
         rgb = rgb.astype(np.float32) / 255.0
@@ -217,142 +274,187 @@ class DiffusionPolicy:
         return rgb
 
     def run_one_episode(self, seed):
-        obs, _ = self.env.reset(seed=seed)
+        """Run one episode (or num_envs episodes in parallel for vectorized envs)"""
+        # For vectorized envs, pass list of seeds
+        if self.num_envs > 1:
+            seeds = [seed + i for i in range(self.num_envs)]
+            obs, _ = self.env.reset(seed=seeds)
+        else:
+            obs, _ = self.env.reset(seed=seed)
 
-        state = self.extract_state(obs, self.state_mode, self.obs_mode)
-        images = {key: self.extract_and_process_image(obs, key) for key in self.camera_keys}
+        # Extract observations for all environments at once (more efficient)
+        states_all = self.extract_state(obs, self.state_mode, self.obs_mode, env_idx=None)
+        images_all = {key: self.extract_and_process_image(obs, key, env_idx=None) for key in self.camera_keys}
         if self.obs_mode == "state":
-            tee_pose = self.extract_tee_pose(obs, self.obs_mode)
-        print(f"State shape: {state.shape}, mode: {self.state_mode}")
+            tee_poses_all = self.extract_tee_pose(obs, self.obs_mode, env_idx=None)
 
-        # Fill buffers with initial observation
-        for _ in range(self.cfg.n_obs_steps):
-            self.state_buffer.append(state)
+        # Fill buffers with initial observation for this environment
+        for env_idx in range(self.num_envs):
+            state = states_all[env_idx] if self.num_envs > 1 else states_all
+            images = {
+                key: images_all[key][env_idx] if self.num_envs > 1 else images_all[key] for key in self.camera_keys
+            }
             if self.obs_mode == "state":
-                self.tee_pose_buffer.append(tee_pose)
-            for camera_key in self.camera_keys:
-                self.image_buffers[camera_key].append(images[camera_key])
+                tee_pose = tee_poses_all[env_idx] if self.num_envs > 1 else tee_poses_all
 
-        episode_reward = 0
+            for _ in range(self.cfg.n_obs_steps):
+                self.state_buffers[env_idx].append(state)
+                if self.obs_mode == "state":
+                    self.tee_pose_buffers[env_idx].append(tee_pose)
+                for camera_key in self.camera_keys:
+                    self.image_buffers[env_idx][camera_key].append(images[camera_key])
+
+        # Track per-environment episode state
+        episode_rewards = [0.0] * self.num_envs
+        steps = [0] * self.num_envs
+        active_envs = [True] * self.num_envs  # Track which environments are still running/not terminated
+        final_intersection_ratios = [0.0] * self.num_envs
+        successes = [False] * self.num_envs
+
         step = 0
+        while any(active_envs):
+            # Check which environments need new actions due to queue emptying
+            envs_need_actions = [i for i in range(self.num_envs) if active_envs[i] and len(self.action_queues[i]) == 0]
 
-        terminated = False
-        truncated = False
-        while not (terminated or truncated):
-            # Predict new actions when queue is empty
-            if len(self.action_queue) == 0:
-                # Prepare observation dict for policy
+            if len(envs_need_actions) > 0:
+                # Prepare batched observation dict for policy (only for active envs that need actions)
+                # Stack state observations from each environment's buffer
+                state_batch = []
+                for env_idx in envs_need_actions:
+                    state_batch.append(np.stack(list(self.state_buffers[env_idx]), axis=0))
+                state_batch = np.stack(state_batch, axis=0)  # (batch_size, n_obs_steps, state_dim)
+
                 obs_dict = {
                     "obs": {
-                        "agent_pos": torch.from_numpy(np.stack(list(self.state_buffer), axis=0))
-                        .unsqueeze(0)
-                        .to(self.device),
+                        "agent_pos": torch.from_numpy(state_batch).to(self.device),
                     }
                 }
 
                 # Add tee_pose to observation dict
                 if self.obs_mode == "state":
-                    obs_dict["obs"]["tee_pose"] = (
-                        torch.from_numpy(np.stack(list(self.tee_pose_buffer), axis=0)).unsqueeze(0).to(self.device)
-                    )
+                    tee_pose_batch = []
+                    for env_idx in envs_need_actions:
+                        tee_pose_batch.append(np.stack(list(self.tee_pose_buffers[env_idx]), axis=0))
+                    tee_pose_batch = np.stack(tee_pose_batch, axis=0)
+                    obs_dict["obs"]["tee_pose"] = torch.from_numpy(tee_pose_batch).to(self.device)
 
                 # Add camera images to observation dict
                 for camera_key in self.camera_keys:
-                    stacked_images = np.stack(list(self.image_buffers[camera_key]), axis=0)
-                    obs_dict["obs"][camera_key] = torch.from_numpy(stacked_images).unsqueeze(0).to(self.policy.device)
-
-                ########################################################################################################
-                ### Debug: Display images from observation
-                ########################################################################################################
-                if False and self.obs_mode == "rgbd":  # Set to True to enable image visualization
-                    if self.debug_fig is None:
-                        # Create figure on first use
-                        self.debug_fig, axes = plt.subplots(
-                            self.cfg.n_obs_steps,
-                            len(self.camera_keys),
-                            figsize=(5 * len(self.camera_keys), 5 * self.cfg.n_obs_steps),
-                        )
-                        if len(self.camera_keys) == 1:
-                            axes = axes.reshape(-1, 1)
-                        self.debug_fig.canvas.manager.set_window_title("Policy Observations")
-                    else:
-                        # Clear existing figure
-                        axes = self.debug_fig.axes
-                        for ax in axes:
-                            ax.clear()
-                        # Reshape axes back to grid
-                        axes = np.array(axes).reshape(self.cfg.n_obs_steps, len(self.camera_keys))
-
-                    for t in range(self.cfg.n_obs_steps):
-                        for cam_idx, camera_key in enumerate(self.camera_keys):
-                            img = list(self.image_buffers[camera_key])[t]
-                            # img is in C x H x W format, normalized to [0, 1]
-                            img_display = np.transpose(img, (1, 2, 0))  # Convert to H x W x C for display
-                            axes[t, cam_idx].imshow(img_display)
-                            axes[t, cam_idx].set_title(f"{camera_key} (t={t}, step={step})")
-                            axes[t, cam_idx].axis("off")
-                    self.debug_fig.tight_layout()
-                    self.debug_fig.canvas.draw()
-                    self.debug_fig.canvas.flush_events()
-                    plt.pause(0.001)  # Small pause to allow GUI to update
-                ########################################################################################################
+                    image_batch = []
+                    for env_idx in envs_need_actions:
+                        image_batch.append(np.stack(list(self.image_buffers[env_idx][camera_key]), axis=0))
+                    image_batch = np.stack(image_batch, axis=0)  # (batch_size, n_obs_steps, C, H, W)
+                    obs_dict["obs"][camera_key] = torch.from_numpy(image_batch).to(self.policy.device)
 
                 # Run policy inference
                 with torch.no_grad():
                     result = self.policy.predict_action(obs_dict, use_DDIM=True)
-                    actions = result["action_pred"][0].cpu().numpy()
+                    actions_batch = result["action_pred"].cpu().numpy()  # (batch_size, pred_horizon, action_dim)
 
-                # Add actions to action queue using proper indexing (skip first cfg.n_obs_steps-1 for temporal alignment)
-                for action in actions[self.action_start_idx : self.action_end_idx]:
-                    self.action_queue.append(action)
+                # Add actions to action queues using proper indexing
+                for i, env_idx in enumerate(envs_need_actions):
+                    actions = actions_batch[i]  # (pred_horizon, action_dim)
+                    for action in actions[self.action_start_idx : self.action_end_idx]:
+                        self.action_queues[env_idx].append(action)
 
-            # Execute next action from action queue
-            action = self.action_queue.popleft()
-            # print(f"action: {action}")
-            # Add batch dimension for vectorized environment (num_envs=1 expects shape [1, action_dim])
-            if action.ndim == 1:
-                action = action[np.newaxis, :]  # [action_dim] -> [1, action_dim]
+            # Execute next action from action queues for all active environments
+            actions_to_execute = []
+            for env_idx in range(self.num_envs):
+                if active_envs[env_idx] and len(self.action_queues[env_idx]) > 0:
+                    action = self.action_queues[env_idx].popleft()
+                    actions_to_execute.append(action)
+                else:
+                    # Pad with zeros for inactive environments (they won't be used but need correct shape)
+                    actions_to_execute.append(
+                        np.zeros_like(actions_to_execute[0]) if actions_to_execute else np.zeros(2)
+                    )
 
-            obs, reward, terminated, truncated, info = self.env.step(action)
+            # Stack actions for vectorized step
+            if self.num_envs == 1:
+                actions_array = actions_to_execute[0][np.newaxis, :]  # (1, action_dim)
+            else:
+                actions_array = np.stack(actions_to_execute, axis=0)  # (num_envs, action_dim)
 
-            # Update observation buffers
-            state = self.extract_state(obs, self.state_mode, self.obs_mode)
-            self.state_buffer.append(state)
+            obs, reward, terminated, truncated, info = self.env.step(actions_array)
+
+            # Extract observations for all environments at once
+            states_all = self.extract_state(obs, self.state_mode, self.obs_mode, env_idx=None)
             if self.obs_mode == "state":
-                tee_pose = self.extract_tee_pose(obs, self.obs_mode)
-                self.tee_pose_buffer.append(tee_pose)
-            for camera_key in self.camera_keys:
-                rgb = self.extract_and_process_image(obs, camera_key)
-                self.image_buffers[camera_key].append(rgb)
+                tee_poses_all = self.extract_tee_pose(obs, self.obs_mode, env_idx=None)
+            images_all = {key: self.extract_and_process_image(obs, key, env_idx=None) for key in self.camera_keys}
 
-            # Accumulate reward
-            episode_reward += reward if isinstance(reward, float) else reward.item()
+            # Update observation buffers and track results for each environment
+            for env_idx in range(self.num_envs):
+                if not active_envs[env_idx]:
+                    continue
+
+                # Extract this environment's data from the batch
+                state = states_all[env_idx] if self.num_envs > 1 else states_all
+                self.state_buffers[env_idx].append(state)
+                if self.obs_mode == "state":
+                    tee_pose = tee_poses_all[env_idx] if self.num_envs > 1 else tee_poses_all
+                    self.tee_pose_buffers[env_idx].append(tee_pose)
+                for camera_key in self.camera_keys:
+                    rgb = images_all[camera_key][env_idx] if self.num_envs > 1 else images_all[camera_key]
+                    self.image_buffers[env_idx][camera_key].append(rgb)
+
+                # Accumulate reward
+                reward_val = reward[env_idx] if self.num_envs > 1 else reward
+                if isinstance(reward_val, torch.Tensor):
+                    reward_val = reward_val.item()
+                episode_rewards[env_idx] += reward_val
+
+                steps[env_idx] += 1
+
+                # Check termination for this environment
+                terminated_val = terminated[env_idx] if self.num_envs > 1 else terminated
+                truncated_val = truncated[env_idx] if self.num_envs > 1 else truncated
+                if isinstance(terminated_val, torch.Tensor):
+                    terminated_val = terminated_val.item()
+                if isinstance(truncated_val, torch.Tensor):
+                    truncated_val = truncated_val.item()
+
+                # Get success status
+                success_val = info.get("success", False)
+                if self.num_envs > 1:
+                    success_val = success_val[env_idx]
+                if isinstance(success_val, torch.Tensor):
+                    success_val = success_val.item()
+
+                # Calculate intersection ratio
+                base_env = self.env.unwrapped
+                intersection_ratio = base_env.pseudo_render_intersection()
+                if isinstance(intersection_ratio, torch.Tensor):
+                    if self.num_envs > 1:
+                        intersection_ratio = intersection_ratio[env_idx].item()
+                    else:
+                        intersection_ratio = intersection_ratio.item()
+
+                final_intersection_ratios[env_idx] = intersection_ratio
+                successes[env_idx] = bool(success_val)
+
+                # Mark environment as done if terminated or truncated
+                if terminated_val or truncated_val:
+                    active_envs[env_idx] = False
+                    if success_val:
+                        print(f"✓ Env {env_idx} SUCCESS at step {steps[env_idx]}!")
+
+            # Print compact status for all environments
+            if step % 25 == 0:
+                status = [
+                    f"{'✓' if successes[i] else '✗'}{final_intersection_ratios[i]:.2f}" if active_envs[i] else "-"
+                    for i in range(self.num_envs)
+                ]
+                print(f"Step {step}: [{' '.join(status)}]")
 
             step += 1
-            self.env.render()
 
-            # Print detailed success metrics
-            # SUCCESS CRITERIA: The T block must cover ≥90% of the goal T's 2D area
-            # This is measured by projecting both T shapes onto a 64x64 grid and
-            # calculating: intersection_area / goal_area >= 0.90
-            # The T must be correctly positioned, rotated, and aligned within ~10% tolerance
-            success = (
-                info.get("success", False)
-                if isinstance(info.get("success", False), torch.Tensor)
-                else info.get("success", False).item()
-            )
+            # Only render if render_mode is set
+            if self.env.render_mode is not None:
+                self.env.render()
 
-            # Calculate and display intersection percentage
-            # Access the base environment to get intersection data
-            base_env = self.env.unwrapped
-            intersection_ratio = base_env.pseudo_render_intersection()
-            if isinstance(intersection_ratio, torch.Tensor):
-                intersection_ratio = intersection_ratio.item()
-
-            if step % 25 == 0:
-                print(f"Step {step}: intersection={intersection_ratio:.4f}, success={success}")
-
-            if success:
-                print("✓ SUCCESS!")
-                break
-        return episode_reward, success, intersection_ratio, step
+        # Return results for all environments
+        if self.num_envs == 1:
+            return episode_rewards[0], successes[0], final_intersection_ratios[0], steps[0]
+        else:
+            return episode_rewards, successes, final_intersection_ratios, steps

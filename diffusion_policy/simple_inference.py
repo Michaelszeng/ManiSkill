@@ -26,7 +26,7 @@ from diffusion_policy.workspace.base_workspace import BaseWorkspace
 # Configuration
 ENV_ID = "Planar-PushT-v1"
 NUM_FAILURES_TO_STOP = 10
-CHECKPOINT = "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/epoch=425-val_loss=0.1048-val_ddim_mse=0.032148.ckpt"
+CHECKPOINT = "/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/epoch=075-val_loss=0.1215-val_ddim_mse=0.747608.ckpt"
 CONTROL_MODE = "pd_ee_delta_pose"
 # OBS_MODE = "state"
 OBS_MODE = "rgbd"
