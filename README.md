@@ -9,12 +9,19 @@ For display issues, run:
 QT_QPA_PLATFORM=xcb
 ```
 
-
-Clone my diffusion policy repo and install (along with required dependencies):
+For policy evaluation, clone my diffusion policy repo and install (along with required dependencies):
 ```bash
 pip install -e /home/michzeng/diffusion-policy --no-deps
 pip install -r diffusion_policy_requirements.txt
 ```
+
+
+### Teleop Data Collection
+
+```bash
+python diffusion_policy/gamepad_teleop.py --output maniskill_planar_push_t.zarr
+```
+
 
 ### Trajectory Replay Visualization
 
@@ -69,7 +76,7 @@ IMPORTANT: `-n` must be set to the same value as used during conversion.
 
 Videos will be saved to the same directory as the trajectory file.
 
-### Trianing a Diffusion Policy:
+### Training a Diffusion Policy:
 
 Train PPO policy:
 ```bash
@@ -107,12 +114,14 @@ python examples/baselines/ppo/ppo_fast.py \
   --save-trajectory \
   --no-capture-video \
   --eval-partial-reset \
-  --eval-temperature=1.5
+  --eval-temperature=0.0
 ```
 Note: `num-eval-steps` is the number of times we call `step()` on the vectorized environment. So the total number of steps taken is `num-eval-steps * num_eval_envs`.
 Note: with `eval-partial-reset`, the policy will terminate and reset immediately upon success, but this only works with `num_eval_envs=1`.
 
 We also set `eval-temperature=1.5` to try to introduce more diversity into the data. Set to `0` for deterministic, mean evaluation.
+
+This will save `trajectory.h5` and `trajectory.json` files to the `checkpoints/test_videos` folder. You will need to rename these to `trajectory.none.pd_ee_delta_pose.physx_cuda.*` before regenerating the dataset with RGB observations (the filename informs the `replay_trajectory` script of how the dataset was generated).
 
 Regenerate Dataset with RGB observations (add `--count <n>` to limit the number of episodes replayed):
 ```bash

@@ -218,17 +218,32 @@ class PlanarPushTEnv(BaseEnv):
 
     @property
     def _default_sensor_configs(self):
-        pose = sapien_utils.look_at(eye=[0.3, 0, 0.6], target=[-0.1, 0, 0.1])
+        base_pose = sapien_utils.look_at(eye=[0.3, 0, 0.6], target=[-0.1, 0, 0.1])
+        # Wrist cam mounted on the panda_stick TCP. The TCP target orientation
+        # is (w=0, x=1, y=0, z=0) (180° about x), so TCP +z points world -z.
+        # A -90° rotation about y in the mount frame aligns the camera view
+        # axis (+x) with TCP +z (downward in world).
+        wrist_pose = sapien.Pose(p=[0.0, 0.0, -0.08], q=[0.7071, 0.0, -0.7071, 0.0])
         return [
             CameraConfig(
                 "base_camera",
-                pose=pose,
+                pose=base_pose,
                 width=128,
                 height=128,
                 fov=np.pi / 2,
                 near=0.01,
                 far=100,
-            )
+            ),
+            CameraConfig(
+                "wrist_camera",
+                pose=wrist_pose,
+                width=128,
+                height=128,
+                fov=np.pi / 2,
+                near=0.01,
+                far=100,
+                mount=self.agent.tcp,
+            ),
         ]
 
     @property
