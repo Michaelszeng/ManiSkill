@@ -1,20 +1,22 @@
 # ManiSkill 3 (Beta)
 
-## Michael's Notes
+# Michael's Notes
 
-### Install
+## Install
 
 For display issues, run:
 ```bash
 QT_QPA_PLATFORM=xcb
 ```
 
-For policy evaluation, clone my diffusion policy repo and install (along with required dependencies):
+For policy evaluation, clone my [diffusion policy repo](https://github.com/Michaelszeng/diffusion-policy-experiments) and install (along with required dependencies):
 ```bash
 pip install -e /home/michzeng/diffusion-policy --no-deps
 pip install -r diffusion_policy_requirements.txt
 ```
 
+
+## Data Collection
 
 ### Teleop Data Collection
 
@@ -22,61 +24,7 @@ pip install -r diffusion_policy_requirements.txt
 python diffusion_policy/gamepad_teleop.py --output maniskill_planar_push_t.zarr
 ```
 
-
-### Trajectory Replay Visualization
-
-#### For State Observations (obs_mode='state')
-
-To visualize trajectories collected with GPU simulation, use CPU rendering backend..
-
-To visualize dataset without RGB images:
-
-```bash
-python -m mani_skill.trajectory.replay_trajectory \
-    --traj-path <path-to-trajectory.h5> \
-    -b physx_cuda \
-    -r cpu \
-    --vis \
-    --use-env-states \
-    --count 5
-```
-
-To visualize dataset with RGB images:
-
-```bash
-python -m mani_skill.trajectory.replay_trajectory \
-    --traj-path /home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765441128/checkpoints/test_videos/trajectory.rgb.pd_ee_delta_pose.physx_cuda.h5 \
-    -b physx_cuda \
-    --save-video \
-    --use-env-states \
-    --count 5
-```
-
-Key points:
-- `-b physx_cuda`: Use GPU simulation (matches how trajectory was collected)
-- `-r cpu`: Use CPU rendering backend (required for interactive viewer with `--vis`)
-- `--vis`: Enable interactive visualization window
-- `--use-env-states`: Replay using environment states for exact reproduction
-
-#### For RGB Observations (obs_mode='rgb')
-
-Interactive visualization (`--vis`) is not supported for RGB trajectories with GPU simulation because camera rendering requires GPU backend. Instead, save videos:
-
-```bash
-python -m mani_skill.trajectory.replay_trajectory \
-    --traj-path <path-to-trajectory.rgb.h5> \
-    -b physx_cuda \
-    -n 16 \
-    --save-video \
-    --use-env-states \
-    --count 20
-```
-
-IMPORTANT: `-n` must be set to the same value as used during conversion.
-
-Videos will be saved to the same directory as the trajectory file.
-
-### Training a Diffusion Policy:
+### RL-Expert Data Generation:
 
 Train PPO policy:
 ```bash
@@ -110,7 +58,7 @@ python examples/baselines/ppo/ppo_fast.py \
   --evaluate \
   --checkpoint=/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1766536544/checkpoints/final_ckpt.pt \
   --num_eval_envs=1 \
-  --num-eval-steps=1000000 \
+  --num-eval-steps=100000 \
   --save-trajectory \
   --no-capture-video \
   --eval-partial-reset \
@@ -118,6 +66,7 @@ python examples/baselines/ppo/ppo_fast.py \
 ```
 Note: `num-eval-steps` is the number of times we call `step()` on the vectorized environment. So the total number of steps taken is `num-eval-steps * num_eval_envs`.
 Note: with `eval-partial-reset`, the policy will terminate and reset immediately upon success, but this only works with `num_eval_envs=1`.
+Note: this script does record failures, but they'll be filtered out in the dataset regeneration step.
 
 We also set `eval-temperature=1.5` to try to introduce more diversity into the data. Set to `0` for deterministic, mean evaluation.
 
@@ -132,10 +81,79 @@ python -m mani_skill.trajectory.replay_trajectory \
     -n 16 \
     --save-traj \
     --use-env-states \
-    --allow-failure
+    --count 500
 ```
 
-Now, you are ready to use the resulting `.h5` and `.json` dataset to train a diffusion policy.
+Convert `.h5` dataset to `.zarr` format for training with the [diffusion policy repo](https://github.com/Michaelszeng/diffusion-policy-experiments)
+
+```bash
+python diffusion_policy/h5_to_zarr.py \
+    --h5 /home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1766536544/checkpoints/test_videos/trajectory.rgb.pd_ee_delta_pose.physx_cuda.h5 \
+    --output /home/michzeng/diffusion-policy/data/diffusion_experiments/maniskill/maniskill_planar_push_t.zarr
+```
+
+Now, you are ready to train!
+
+
+
+
+## Diffusion Policy Evaluation
+
+
+
+
+## Dataset Utilities
+
+### For State Observations (obs_mode='state')
+
+To visualize trajectories collected with GPU simulation, use CPU rendering backend..
+
+To visualize dataset without RGB images:
+
+```bash
+python -m mani_skill.trajectory.replay_trajectory \
+    --traj-path <path-to-trajectory.h5> \
+    -b physx_cuda \
+    -r cpu \
+    --vis \
+    --use-env-states \
+    --count 5
+```
+
+To visualize dataset with RGB images:
+
+```bash
+python -m mani_skill.trajectory.replay_trajectory \
+    --traj-path /home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1765441128/checkpoints/test_videos/trajectory.rgb.pd_ee_delta_pose.physx_cuda.h5 \
+    -b physx_cuda \
+    --save-video \
+    --use-env-states \
+    --count 5
+```
+
+Key points:
+- `-b physx_cuda`: Use GPU simulation (matches how trajectory was collected)
+- `-r cpu`: Use CPU rendering backend (required for interactive viewer with `--vis`)
+- `--vis`: Enable interactive visualization window
+- `--use-env-states`: Replay using environment states for exact reproduction
+
+### For RGB Observations (obs_mode='rgb')
+
+Interactive visualization (`--vis`) is not supported for RGB trajectories with GPU simulation because camera rendering requires GPU backend. Instead, save videos:
+
+```bash
+python -m mani_skill.trajectory.replay_trajectory \
+    --traj-path <path-to-trajectory.rgb.h5> \
+    -b physx_cuda \
+    -n 16 \
+    --save-video \
+    --use-env-states \
+    --count 20
+```
+
+IMPORTANT: `-n` must be set to the same value as used during conversion.
+
+Videos will be saved to the same directory as the trajectory file.
 
 
 

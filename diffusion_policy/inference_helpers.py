@@ -273,8 +273,21 @@ class DiffusionPolicy:
 
         return rgb
 
-    def run_one_episode(self, seed):
-        """Run one episode (or num_envs episodes in parallel for vectorized envs)"""
+    def run_one_episode(self, seed, record_video: bool = False):
+        """Run one episode (or num_envs episodes in parallel for vectorized envs).
+
+        If ``record_video=True``, the env must be in render_mode="rgb_array";
+        per-step frames will be accumulated per env and made available as
+        ``self.last_frames`` (list of length num_envs, each entry a list of
+        (H, W, 3) uint8 frames). Reset to None when ``record_video=False``.
+        """
+        self.last_frames = None
+        if record_video:
+            if self.env.render_mode != "rgb_array":
+                raise RuntimeError(
+                    f"record_video=True requires render_mode='rgb_array', got {self.env.render_mode!r}"
+                )
+            frame_buffers = [[] for _ in range(self.num_envs)]
         # For vectorized envs, pass list of seeds
         if self.num_envs > 1:
             seeds = [seed + i for i in range(self.num_envs)]
@@ -449,9 +462,24 @@ class DiffusionPolicy:
 
             step += 1
 
-            # Only render if render_mode is set
-            if self.env.render_mode is not None:
+            # Render: either for the human viewer, or to capture per-step frames.
+            if record_video:
+                frame = self.env.render()  # (num_envs, H, W, 3) uint8 tensor
+                if isinstance(frame, torch.Tensor):
+                    frame = frame.cpu().numpy()
+                frame = frame.astype(np.uint8, copy=False)
+                if frame.ndim == 3:  # single env: (H, W, 3) → (1, H, W, 3)
+                    frame = frame[np.newaxis, ...]
+                for env_idx in range(self.num_envs):
+                    # Only append while the env is still running; this keeps each
+                    # trial's video length aligned with its actual trial_time.
+                    if active_envs[env_idx] or steps[env_idx] == step:
+                        frame_buffers[env_idx].append(frame[env_idx])
+            elif self.env.render_mode is not None:
                 self.env.render()
+
+        if record_video:
+            self.last_frames = frame_buffers
 
         # Return results for all environments
         if self.num_envs == 1:

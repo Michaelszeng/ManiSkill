@@ -24,7 +24,7 @@ sys.path.insert(0, str(DIFFUSION_POLICY_PATH))
 from diffusion_policy.workspace.base_workspace import BaseWorkspace
 
 # Configuration
-ENV_ID = "PushT-v1"
+ENV_ID = "Planar-PushT-v1"
 NUM_FAILURES_TO_STOP = 2
 CHECKPOINT = "~/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints/latest.ckpt"
 OUTPUT_DIR = "~/diffusion-policy/dagger_data/maniskill/failures"  # Where to save failed episode recordings
