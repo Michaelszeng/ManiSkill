@@ -84,9 +84,9 @@ def _read_gamepad(joy, deadzone=0.05):
     lx = 0.0 if abs(lx) < deadzone else lx
     ly = 0.0 if abs(ly) < deadzone else ly
     buttons = {
-        "X":  bool(joy.get_button(0)),  # b0
-        "A":  bool(joy.get_button(1)),  # b1
-        "B":  bool(joy.get_button(2)),  # b2
+        "X": bool(joy.get_button(0)),  # b0
+        "A": bool(joy.get_button(1)),  # b1
+        "B": bool(joy.get_button(2)),  # b2
         "LT": bool(joy.get_button(6)),  # L2 on Logitech Dual Action
         "RT": bool(joy.get_button(7)),  # R2 on Logitech Dual Action
     }
@@ -108,13 +108,8 @@ def _interactive_debug(joy):
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     raise KeyboardInterrupt
 
-            axes = "  ".join(
-                f"a{i}:{joy.get_axis(i):+.2f}" for i in range(n_axes)
-            )
-            btns = "  ".join(
-                f"b{i}:{'ON ' if joy.get_button(i) else 'off'}"
-                for i in range(n_btns)
-            )
+            axes = "  ".join(f"a{i}:{joy.get_axis(i):+.2f}" for i in range(n_axes))
+            btns = "  ".join(f"b{i}:{'ON ' if joy.get_button(i) else 'off'}" for i in range(n_btns))
             line = f"\r{axes}    {btns}   "
             print(line, end="", flush=True)
             time.sleep(0.05)
@@ -132,6 +127,7 @@ def _save_trajectory(traj_dir, idx, buf):
         traj_dir / f"{idx:05d}.npz",
         state=np.stack(buf["state"]),
         slider_state=np.stack(buf["slider_state"]),
+        action=np.stack(buf["action"]),
         base_camera=np.stack(buf["base_camera"]),
         wrist_camera=np.stack(buf["wrist_camera"]),
     )
@@ -144,7 +140,7 @@ def convert_to_zarr(traj_dir: Path, zarr_path: str):
     for f in sorted(traj_dir.glob("*.npz")):
         d = np.load(f)
         state, slider = d["state"], d["slider_state"]
-        action = np.concatenate([state[1:, :2], state[-1:, :2]], axis=0)
+        action = d["action"]  # actual commanded 2D actions
         target = np.tile(slider[-1], (len(state), 1))
         states.append(state)
         sliders.append(slider)
@@ -195,7 +191,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--output", default="planar_pusht_teleop.zarr")
     ap.add_argument("--traj-dir", default="planar_pusht_trajs")
-    ap.add_argument("--scale", type=float, default=0.1, help="base action scale applied to joystick output")
+    ap.add_argument("--scale", type=float, default=0.15, help="base action scale applied to joystick output")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--debug-axes", action="store_true", help="print gamepad axes/button info at startup and exit")
     args = ap.parse_args()
@@ -214,24 +210,39 @@ def main():
         pygame.quit()
         return
 
+    zarr_path = Path(args.output)
+    if zarr_path.exists():
+        _existing = zarr.open_group(str(zarr_path), mode="r")
+        n_existing = int(_existing["meta"]["episode_ends"].shape[0]) if "meta" in _existing else 0
+    else:
+        n_existing = 0
+    _print_blue(f"Zarr: {zarr_path} ({n_existing} existing episodes)")
+
     traj_dir = Path(args.traj_dir)
     if traj_dir.exists():
         shutil.rmtree(traj_dir)
     traj_dir.mkdir(parents=True)
 
-    env = gym.make("Planar-PushT-Teleop-v1", num_envs=1, obs_mode="rgb", render_mode="human")
+    env = gym.make(
+        "Planar-PushT-Teleop-v1",
+        num_envs=1,
+        obs_mode="rgb",
+        render_mode="human",
+        require_pusher_at_start=True,
+    )
     seed = args.seed if args.seed is not None else int(time.time()) % 10**6
     obs, _ = env.reset(seed=seed)
     base_env = env.unwrapped
 
     fsm = FSMState.REGULAR
     prev = {"A": False, "B": False, "X": False, "LT": False, "RT": False}
-    buf = {k: [] for k in ("state", "slider_state", "base_camera", "wrist_camera")}
+    buf = {k: [] for k in ("state", "slider_state", "action", "base_camera", "wrist_camera")}
     n_saved = 0
 
-    def record():
+    def record(action_2d):
         buf["state"].append(_pusher_xytheta(obs))
         buf["slider_state"].append(_slider_xytheta(base_env))
+        buf["action"].append(action_2d.reshape(2))
         buf["base_camera"].append(_img(obs["sensor_data"]["base_camera"]["rgb"]))
         buf["wrist_camera"].append(_img(obs["sensor_data"]["wrist_camera"]["rgb"]))
 
@@ -247,7 +258,7 @@ def main():
 
         scale = args.scale
         if btn["RT"]:
-            scale *= 0.25
+            scale *= 0.5
         if btn["LT"]:
             scale *= 3.0
 
@@ -258,7 +269,6 @@ def main():
         if fsm == FSMState.REGULAR:
             if pressed["A"]:
                 clear()
-                record()
                 fsm = FSMState.DATA_COLLECTION
                 _print_blue("Recording started.")
             elif pressed["B"]:
@@ -266,12 +276,13 @@ def main():
                 _print_blue("Environment reset.")
         elif fsm == FSMState.DATA_COLLECTION:
             if pressed["A"]:
+                ep_len = len(buf["state"])
                 _save_trajectory(traj_dir, n_saved, buf)
                 n_saved += 1
                 clear()
                 obs, _ = env.reset()
                 fsm = FSMState.REGULAR
-                _print_blue(f"Trajectory saved ({n_saved} total).")
+                _print_blue(f"Trajectory saved ({ep_len} steps) — {n_saved} this session, {n_existing + n_saved} total.")
                 continue
             elif pressed["B"]:
                 clear()
@@ -281,9 +292,21 @@ def main():
                 continue
 
         action = (joy_xy * scale).reshape(1, 2)
-        obs, _, _, _, _ = env.step(action)
         if fsm == FSMState.DATA_COLLECTION:
-            record()
+            record(action)  # record (obs[t], action[t]) before stepping
+        obs, _, terminated, _, _ = env.step(action)
+        if fsm == FSMState.DATA_COLLECTION:
+            if terminated.any():
+                ep_len = len(buf["state"])
+                _save_trajectory(traj_dir, n_saved, buf)
+                n_saved += 1
+                clear()
+                obs, _ = env.reset()
+                fsm = FSMState.REGULAR
+                _print_blue(f"Success! Trajectory saved ({ep_len} steps) — {n_saved} this session, {n_existing + n_saved} total.")
+        elif terminated.any():
+            obs, _ = env.reset()
+            _print_blue("Success! Environment reset.")
         env.render()
 
     env.close()

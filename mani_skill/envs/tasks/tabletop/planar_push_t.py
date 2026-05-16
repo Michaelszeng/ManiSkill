@@ -116,8 +116,11 @@ class PlanarPushTEnv(BaseEnv):
     # Planar constraint parameters
     fixed_ee_z_height = 0.024  # Fixed z-height for end effector (matching ee_starting_pos3D)
 
-    def __init__(self, *args, robot_uids="panda_stick", robot_init_qpos_noise=0.02, intersection_thresh=None, **kwargs):
+    def __init__(self, *args, robot_uids="panda_stick", robot_init_qpos_noise=0.02, intersection_thresh=None,
+                 require_pusher_at_start=False, pusher_start_tol=0.05, **kwargs):
         self.robot_init_qpos_noise = robot_init_qpos_noise
+        self.require_pusher_at_start = require_pusher_at_start
+        self.pusher_start_tol = pusher_start_tol
 
         # Allow intersection_thresh to be overridden via __init__
         if intersection_thresh is not None:
@@ -545,11 +548,17 @@ class PlanarPushTEnv(BaseEnv):
             )
 
     def evaluate(self):
-        # success is where the overlap is over intersection thresh and ee dist to start pos is less than it's own thresh
         inter_area = self.pseudo_render_intersection()
-        tee_place_success = (inter_area) >= self.intersection_thresh
+        tee_place_success = inter_area >= self.intersection_thresh
 
-        success = tee_place_success
+        if self.require_pusher_at_start:
+            tcp_xy = self.agent.tcp.pose.p[:, :2]
+            start_xy = self.ee_starting_pos3D[:2].to(tcp_xy.device)
+            pusher_dist = torch.linalg.norm(tcp_xy - start_xy, dim=-1)
+            pusher_at_start = pusher_dist <= self.pusher_start_tol
+            success = tee_place_success & pusher_at_start
+        else:
+            success = tee_place_success
 
         return {"success": success}
 
