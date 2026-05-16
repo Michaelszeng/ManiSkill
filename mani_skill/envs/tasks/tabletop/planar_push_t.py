@@ -60,7 +60,7 @@ class WhiteTableSceneBuilder(TableSceneBuilder):
                 triangle.material.set_roughness_texture(None)
 
 
-@register_env("Planar-PushT-v1", max_episode_steps=200)
+@register_env("Planar-PushT-v1", max_episode_steps=400)
 class PlanarPushTEnv(BaseEnv):
     """
     **Task Description:**
@@ -237,9 +237,12 @@ class PlanarPushTEnv(BaseEnv):
         # We mount the camera offset laterally (TCP +x) and slightly above the
         # stick, looking forward (+y) and down at the workspace, so the stick
         # body is visible on one side of the frame and the workspace on the other.
-        # Pose computed via sapien_utils.look_at(eye=[0.10, -0.05, -0.10],
-        # target=[0.0, 0.15, 0.0]) in TCP-local coordinates.
-        wrist_pose = sapien.Pose(p=[0.10, -0.05, -0.10], q=[0.5142, 0.1775, -0.1097, 0.8319])
+        # Wrist cam: ~12 cm above TCP, looking straight down (0° tilt off-vertical).
+        # 4 cm lateral offset in TCP +x keeps the camera out of the stick rod.
+        # up=[0,1,0] in TCP-local = TCP +y = world -y, so the workspace is at
+        # the top of the image. Pose from sapien_utils.look_at(eye=[0.04, 0, -0.12],
+        # target=[0.04, 0, 0], up=[0, 1, 0]).
+        wrist_pose = sapien.Pose(p=[0.04, 0.0, -0.12], q=[0.5, -0.5, -0.5, -0.5])
         return [
             CameraConfig(
                 "base_camera",

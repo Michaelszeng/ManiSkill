@@ -94,10 +94,7 @@ def _read_gamepad(joy, deadzone=0.05):
     lx, ly = joy.get_axis(0), joy.get_axis(1)
     lx = 0.0 if abs(lx) < deadzone else lx
     ly = 0.0 if abs(ly) < deadzone else ly
-    buttons = {
-        name: bool(joy.get_button(idx)) or name in pressed_events
-        for idx, name in _BUTTON_MAP.items()
-    }
+    buttons = {name: bool(joy.get_button(idx)) or name in pressed_events for idx, name in _BUTTON_MAP.items()}
     # World +x is "forward" in the env; map left-stick (lx, ly) → (ly, lx)
     # (inverted: pushing the stick up moves the pusher in -x).
     return np.array([ly, lx], dtype=np.float32), buttons
@@ -199,7 +196,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--output", default="planar_pusht_teleop.zarr")
     ap.add_argument("--traj-dir", default="planar_pusht_trajs")
-    ap.add_argument("--scale", type=float, default=0.5, help="base action scale applied to joystick output")
+    ap.add_argument("--scale", type=float, default=0.8, help="base action scale applied to joystick output")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--debug-axes", action="store_true", help="print gamepad axes/button info at startup and exit")
     args = ap.parse_args()

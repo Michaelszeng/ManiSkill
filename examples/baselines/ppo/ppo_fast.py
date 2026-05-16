@@ -26,7 +26,6 @@ import tyro
 from tensordict import from_module
 from tensordict.nn import CudaGraphModule
 from torch.distributions.normal import Normal
-from torch.utils.tensorboard import SummaryWriter
 
 import wandb
 
@@ -41,7 +40,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    track: bool = False
+    track: bool = True
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "ManiSkill"
     """the wandb's project name"""
@@ -187,17 +186,19 @@ class Agent(nn.Module):
 
 
 class Logger:
-    def __init__(self, log_wandb=False, tensorboard: SummaryWriter = None) -> None:
-        self.writer = tensorboard
+    def __init__(self, log_wandb=False) -> None:
         self.log_wandb = log_wandb
 
     def add_scalar(self, tag, scalar_value, step):
-        if self.log_wandb:
-            wandb.log({tag: scalar_value}, step=step)
-        self.writer.add_scalar(tag, scalar_value, step)
+        if not self.log_wandb:
+            return
+        if isinstance(scalar_value, torch.Tensor):
+            scalar_value = scalar_value.item()
+        wandb.log({tag: scalar_value}, step=step)
 
     def close(self):
-        self.writer.close()
+        if self.log_wandb:
+            wandb.finish()
 
 
 def gae(next_obs, next_done, container, final_values):
@@ -479,11 +480,9 @@ if __name__ == "__main__":
     if not args.evaluate:
         print("Running training")
         if args.track:
-            import wandb
-
             config = vars(args)
             config["env_cfg"] = dict(
-                **env_kwargs,
+                **train_env_kwargs,
                 num_envs=args.num_envs,
                 env_id=args.env_id,
                 reward_mode="normalized_dense",
@@ -491,7 +490,7 @@ if __name__ == "__main__":
                 partial_reset=args.partial_reset,
             )
             config["eval_env_cfg"] = dict(
-                **env_kwargs,
+                **eval_env_kwargs,
                 num_envs=args.num_eval_envs,
                 env_id=args.env_id,
                 reward_mode="normalized_dense",
@@ -501,19 +500,15 @@ if __name__ == "__main__":
             wandb.init(
                 project=args.wandb_project_name,
                 entity=args.wandb_entity,
-                sync_tensorboard=False,
                 config=config,
                 name=run_name,
                 save_code=True,
                 group=args.wandb_group,
                 tags=["ppo", "walltime_efficient", f"GPU:{torch.cuda.get_device_name()}"],
             )
-        writer = SummaryWriter(f"runs/{run_name}")
-        writer.add_text(
-            "hyperparameters",
-            "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-        )
-        logger = Logger(log_wandb=args.track, tensorboard=writer)
+        else:
+            print("WARNING: --track is False, no metrics will be logged. Pass --track to enable wandb.")
+        logger = Logger(log_wandb=args.track)
         # Create checkpoints directory
         os.makedirs(f"runs/{run_name}/checkpoints", exist_ok=True)
     else:
