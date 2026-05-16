@@ -78,17 +78,25 @@ def _slider_xytheta(base_env):
     return np.array([pos[0], pos[1], _quat_to_z(quat)])
 
 
+_BUTTON_MAP = {0: "X", 1: "A", 2: "B", 6: "LT", 7: "RT"}
+
+
 def _read_gamepad(joy, deadzone=0.05):
-    pygame.event.pump()
+    # Drain the event queue and record any JOYBUTTONDOWN events. We use events
+    # (not just joy.get_button() state) so brief taps that begin and end between
+    # polls aren't dropped — important now that we throttle the loop to 20 Hz.
+    pressed_events = set()
+    for event in pygame.event.get():
+        if event.type == pygame.JOYBUTTONDOWN:
+            name = _BUTTON_MAP.get(event.button)
+            if name is not None:
+                pressed_events.add(name)
     lx, ly = joy.get_axis(0), joy.get_axis(1)
     lx = 0.0 if abs(lx) < deadzone else lx
     ly = 0.0 if abs(ly) < deadzone else ly
     buttons = {
-        "X": bool(joy.get_button(0)),  # b0
-        "A": bool(joy.get_button(1)),  # b1
-        "B": bool(joy.get_button(2)),  # b2
-        "LT": bool(joy.get_button(6)),  # L2 on Logitech Dual Action
-        "RT": bool(joy.get_button(7)),  # R2 on Logitech Dual Action
+        name: bool(joy.get_button(idx)) or name in pressed_events
+        for idx, name in _BUTTON_MAP.items()
     }
     # World +x is "forward" in the env; map left-stick (lx, ly) → (ly, lx)
     # (inverted: pushing the stick up moves the pusher in -x).
@@ -191,7 +199,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--output", default="planar_pusht_teleop.zarr")
     ap.add_argument("--traj-dir", default="planar_pusht_trajs")
-    ap.add_argument("--scale", type=float, default=0.15, help="base action scale applied to joystick output")
+    ap.add_argument("--scale", type=float, default=0.5, help="base action scale applied to joystick output")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--debug-axes", action="store_true", help="print gamepad axes/button info at startup and exit")
     args = ap.parse_args()
@@ -239,6 +247,14 @@ def main():
     buf = {k: [] for k in ("state", "slider_state", "action", "base_camera", "wrist_camera")}
     n_saved = 0
 
+    # Throttle the loop to the env's control frequency so each wall-clock
+    # second corresponds to one simulated second of recorded data, matching
+    # the cadence at which the diffusion policy will be queried at inference.
+    # Same pattern as mani_skill/envs/sim2real_env.py.
+    control_dt = base_env.control_timestep
+    print(f"Control dt: {control_dt}")
+    last_control_time = None
+
     def record(action_2d):
         buf["state"].append(_pusher_xytheta(obs))
         buf["slider_state"].append(_slider_xytheta(base_env))
@@ -252,6 +268,11 @@ def main():
 
     _print_blue("Ready. Press A to start recording, B to reset, X to quit.")
     while fsm != FSMState.TERMINATE:
+        if last_control_time is not None:
+            dt = time.perf_counter() - last_control_time
+            if dt < control_dt:
+                time.sleep(control_dt - dt)
+        last_control_time = time.perf_counter()
         joy_xy, btn = _read_gamepad(joy)
         pressed = _pressed(prev, btn)
         prev = btn
@@ -282,7 +303,9 @@ def main():
                 clear()
                 obs, _ = env.reset()
                 fsm = FSMState.REGULAR
-                _print_blue(f"Trajectory saved ({ep_len} steps) — {n_saved} this session, {n_existing + n_saved} total.")
+                _print_blue(
+                    f"Trajectory saved ({ep_len} steps) — {n_saved} this session, {n_existing + n_saved} total."
+                )
                 continue
             elif pressed["B"]:
                 clear()
@@ -303,7 +326,9 @@ def main():
                 clear()
                 obs, _ = env.reset()
                 fsm = FSMState.REGULAR
-                _print_blue(f"Success! Trajectory saved ({ep_len} steps) — {n_saved} this session, {n_existing + n_saved} total.")
+                _print_blue(
+                    f"Success! Trajectory saved ({ep_len} steps) — {n_saved} this session, {n_existing + n_saved} total."
+                )
         elif terminated.any():
             obs, _ = env.reset()
             _print_blue("Success! Environment reset.")

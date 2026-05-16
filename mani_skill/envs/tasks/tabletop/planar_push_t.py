@@ -116,8 +116,16 @@ class PlanarPushTEnv(BaseEnv):
     # Planar constraint parameters
     fixed_ee_z_height = 0.024  # Fixed z-height for end effector (matching ee_starting_pos3D)
 
-    def __init__(self, *args, robot_uids="panda_stick", robot_init_qpos_noise=0.02, intersection_thresh=None,
-                 require_pusher_at_start=False, pusher_start_tol=0.05, **kwargs):
+    def __init__(
+        self,
+        *args,
+        robot_uids="panda_stick",
+        robot_init_qpos_noise=0.02,
+        intersection_thresh=None,
+        require_pusher_at_start=False,
+        pusher_start_tol=0.05,
+        **kwargs,
+    ):
         self.robot_init_qpos_noise = robot_init_qpos_noise
         self.require_pusher_at_start = require_pusher_at_start
         self.pusher_start_tol = pusher_start_tol
@@ -222,11 +230,16 @@ class PlanarPushTEnv(BaseEnv):
     @property
     def _default_sensor_configs(self):
         base_pose = sapien_utils.look_at(eye=[0.3, 0, 0.6], target=[-0.1, 0, 0.1])
-        # Wrist cam mounted on the panda_stick TCP. The TCP target orientation
-        # is (w=0, x=1, y=0, z=0) (180° about x), so TCP +z points world -z.
-        # A -90° rotation about y in the mount frame aligns the camera view
-        # axis (+x) with TCP +z (downward in world).
-        wrist_pose = sapien.Pose(p=[0.0, 0.0, -0.08], q=[0.7071, 0.0, -0.7071, 0.0])
+        # Wrist cam mounted on the panda_stick TCP. TCP local axes (when TCP is
+        # at its target orientation): +x→world+x, +y→world-y, +z→world-z (down).
+        # The stick body extends from TCP origin (tip) to TCP-local (0, 0, -0.15)
+        # (the panda_hand link), and the workspace lies in TCP +y direction.
+        # We mount the camera offset laterally (TCP +x) and slightly above the
+        # stick, looking forward (+y) and down at the workspace, so the stick
+        # body is visible on one side of the frame and the workspace on the other.
+        # Pose computed via sapien_utils.look_at(eye=[0.10, -0.05, -0.10],
+        # target=[0.0, 0.15, 0.0]) in TCP-local coordinates.
+        wrist_pose = sapien.Pose(p=[0.10, -0.05, -0.10], q=[0.5142, 0.1775, -0.1097, 0.8319])
         return [
             CameraConfig(
                 "base_camera",

@@ -457,7 +457,7 @@ if __name__ == "__main__":
                 save_trajectory=False,
                 save_video_trigger=save_video_trigger,
                 max_steps_per_video=args.num_steps,
-                video_fps=30,
+                video_fps=envs.unwrapped.control_freq,
             )
         eval_envs = RecordEpisode(
             eval_envs,
@@ -466,7 +466,7 @@ if __name__ == "__main__":
             save_video=args.capture_video,
             trajectory_name="trajectory",
             max_steps_per_video=args.num_eval_steps,
-            video_fps=30,
+            video_fps=eval_envs.unwrapped.control_freq,
         )
     envs = ManiSkillVectorEnv(envs, args.num_envs, ignore_terminations=not args.partial_reset, record_metrics=True)
     eval_envs = ManiSkillVectorEnv(
