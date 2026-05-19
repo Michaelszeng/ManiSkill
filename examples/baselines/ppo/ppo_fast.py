@@ -1,5 +1,7 @@
 import os
 
+from planar_return_planner import compute_return_action
+
 from mani_skill.utils import gym_utils
 from mani_skill.utils.wrappers.flatten import FlattenActionSpaceWrapper
 from mani_skill.utils.wrappers.record import RecordEpisode
@@ -577,6 +579,9 @@ if __name__ == "__main__":
             eval_obs, _ = eval_envs.reset()
             eval_metrics = defaultdict(list)
             num_episodes = 0
+            # Once tee_place_success fires for an env, hand control to the return-to-start
+            # planner for the rest of that episode. Only used in --evaluate mode.
+            in_return_phase = np.zeros(args.num_eval_envs, dtype=bool)
             print(
                 f"Running evaluation for {args.num_eval_steps} steps with {args.num_eval_envs} parallel environments..."
             )
@@ -589,12 +594,25 @@ if __name__ == "__main__":
                     action_std = torch.exp(action_logstd) * args.eval_temperature
                     # When temperature=0, this becomes deterministic (std=0)
                     action = action_mean + action_std * torch.randn_like(action_mean)
+                    if args.evaluate and in_return_phase.any():
+                        base_env = eval_envs.unwrapped
+                        for env_idx in np.where(in_return_phase)[0]:
+                            planner_act = compute_return_action(base_env, env_idx=int(env_idx))
+                            action[env_idx] = torch.as_tensor(planner_act, device=action.device, dtype=action.dtype)
                     eval_obs, eval_rew, eval_terminations, eval_truncations, eval_infos = eval_envs.step(action)
+                    if args.evaluate and "tee_place_success" in eval_infos:
+                        place = eval_infos["tee_place_success"]
+                        if isinstance(place, torch.Tensor):
+                            place = place.cpu().numpy()
+                        in_return_phase |= np.asarray(place, dtype=bool)
                     if "final_info" in eval_infos:
                         mask = eval_infos["_final_info"]
                         num_episodes += mask.sum()
                         for k, v in eval_infos["final_info"]["episode"].items():
                             eval_metrics[k].append(v)
+                        if args.evaluate:
+                            done_np = mask.cpu().numpy() if isinstance(mask, torch.Tensor) else np.asarray(mask)
+                            in_return_phase[done_np] = False
                 # Print progress every 100 steps or at the end
                 if (step_idx + 1) % 200 == 0 or step_idx == args.num_eval_steps - 1:
                     print(

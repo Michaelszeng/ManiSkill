@@ -35,7 +35,7 @@ python examples/baselines/ppo/ppo_fast.py \
   --update_epochs=8 \
   --num_minibatches=32 \
   --gamma=0.99 \
-  --total_timesteps=1_000_000_000 \
+  --total_timesteps=2_000_000_000 \
   --num_eval_steps=400 \
   --num_eval_envs=16 \
   --control_mode=pd_ee_delta_pose \

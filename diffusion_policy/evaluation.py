@@ -65,7 +65,14 @@ CONTROL_MODE = "pd_ee_delta_pose"
 OBS_MODE = "rgbd"
 # Must match training configuration
 STATE_MODE = "qpos_qvel"  # "qpos", "qpos_qvel", "tcp_pose"
-MAX_EPISODE_STEPS = 200
+# Env control_freq is fixed at 20 Hz by SimConfig. The diffusion policy is
+# queried at POLICY_QUERY_HZ; each predicted action is held for
+# POLICY_STEPS_PER_QUERY env steps via FrameSkipWrapper. Train the policy on
+# data downsampled by the same stride so action semantics match.
+ENV_CONTROL_HZ = 20
+POLICY_QUERY_HZ = 10
+POLICY_STEPS_PER_QUERY = ENV_CONTROL_HZ // POLICY_QUERY_HZ  # 2
+MAX_EPISODE_STEPS = 400  # in env steps (= 20s at 20 Hz)
 NUM_ENVS = 16
 INTERSECTION_THRESH = 0.75
 
@@ -110,8 +117,36 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="save MP4 videos for the first N trials per (ckpt, horizon). 0=off, -1=all",
     )
-    p.add_argument("--video-fps", type=int, default=20)
+    # One frame is captured per high-level (policy-query) step, so default fps
+    # matches POLICY_QUERY_HZ for real-time playback.
+    p.add_argument("--video-fps", type=int, default=POLICY_QUERY_HZ)
     return p.parse_args()
+
+
+# -----------------------------------------------------------------------------
+# Env wrappers
+# -----------------------------------------------------------------------------
+class FrameSkipWrapper(gym.Wrapper):
+    """Hold each commanded action for ``skip`` env steps. Lets the diffusion
+    policy query at a lower rate than the env's 20 Hz control_freq without
+    touching the inference loop.
+
+    Vectorized-env note: if some envs terminate mid-skip, this wrapper still
+    applies the action on the remaining sub-step(s) for ALL envs. Affects at
+    most the transition spanning termination; success_once metrics are sticky
+    so success rate is unaffected.
+    """
+
+    def __init__(self, env, skip: int):
+        super().__init__(env)
+        self.skip = skip
+
+    def step(self, action):
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        for _ in range(self.skip - 1):
+            obs, r, terminated, truncated, info = self.env.step(action)
+            reward = reward + r
+        return obs, reward, terminated, truncated, info
 
 
 # -----------------------------------------------------------------------------
@@ -252,14 +287,18 @@ def evaluate_one(
             if n_total >= num_trials:
                 break
             n_total += 1
-            result_str = _classify(bool(success), int(steps), MAX_EPISODE_STEPS)
+            # `steps` from inference is in policy-query units (one increment
+            # per env.step on the wrapped env). Convert to env steps so it's
+            # directly comparable to MAX_EPISODE_STEPS and wall-clock time.
+            env_steps = int(steps) * POLICY_STEPS_PER_QUERY
+            result_str = _classify(bool(success), env_steps, MAX_EPISODE_STEPS)
             if success:
                 n_success += 1
             record = {
                 "trial": n_total,
                 "result": result_str,
                 "reward": float(reward),
-                "trial_time": int(steps),
+                "trial_time": env_steps,
             }
             trial_records.append(record)
             csv_writer.writerow(record)
@@ -361,6 +400,12 @@ def main():
         max_episode_steps=MAX_EPISODE_STEPS,
         intersection_thresh=INTERSECTION_THRESH,
     )
+    if POLICY_STEPS_PER_QUERY > 1:
+        env = FrameSkipWrapper(env, skip=POLICY_STEPS_PER_QUERY)
+        print(
+            f"FrameSkip: {POLICY_STEPS_PER_QUERY}x → policy queried at {POLICY_QUERY_HZ} Hz "
+            f"(env runs at {ENV_CONTROL_HZ} Hz)"
+        )
     num_envs = getattr(env, "num_envs", 1)
     print(f"Running with {num_envs} parallel environment(s)\n")
 
