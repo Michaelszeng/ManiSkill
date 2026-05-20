@@ -10,7 +10,10 @@ Usage:
 Output zarr layout:
     data/state          (N, 3)  float64  pusher (x, y, theta) per step
     data/slider_state   (N, 3)  float64  T-block (x, y, theta) per step
-    data/action         (N, 2)  float64  next-step pusher (x, y) -- shifted state
+    data/action         (N, 2)  float32  2D pd_ee delta actions in env-normalized
+                                         units (the raw 2D actions executed by the
+                                         env at each step -- matches the deltas
+                                         recorded by diffusion_policy/gamepad_teleop.py)
     data/target         (N, 3)  float64  goal T-block pose, repeated per step
     data/overhead_camera (N, 128, 128, 3) uint8  (mapped from h5 base_camera)
     data/wrist_camera   (N, 128, 128, 3) uint8  (only if present in h5)
@@ -59,7 +62,19 @@ def convert(h5_path: str, zarr_path: str, success_only: bool = False):
             state = _xytheta(tcp).astype(np.float64)
             slider = _xytheta(tee).astype(np.float64)
             target = np.tile(_xytheta(goal), (T, 1)).astype(np.float64)
-            action = np.concatenate([state[1:, :2], state[-1:, :2]], axis=0)
+            # PlanarPushTEnv overrides single_action_space to shape (2,), so
+            # RecordEpisode stores the raw 2D deltas the env received. Use
+            # them directly so the zarr action semantics match
+            # diffusion_policy/gamepad_teleop.py (delta, not absolute target).
+            actions_raw = np.asarray(t["actions"][:T])
+            if actions_raw.ndim != 2 or actions_raw.shape[-1] != 2:
+                raise ValueError(
+                    f"Expected 2D actions of shape (T, 2) from PlanarPushTEnv, "
+                    f"got shape {actions_raw.shape}. If this h5 was collected "
+                    f"with a non-PlanarPushT env, this conversion script does "
+                    f"not apply."
+                )
+            action = actions_raw.astype(np.float32)
 
             overheads.append(t["obs/sensor_data/base_camera/rgb"][:T])
 

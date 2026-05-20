@@ -8,10 +8,13 @@ At the end of the grid an overall_summary.txt and overall_results.pkl are writte
 
 Example:
     python diffusion_policy/evaluation.py \
-        --checkpoints-dir /path/to/checkpoints \
+        --checkpoints /path/to/checkpoints \
         --action-horizons 1 2 3 4 5 6 8 10 12 15 \
         --n-video-trials 20 \
         --output-dir outputs/maniskill/2_obs/eval
+
+``--checkpoints`` may be either a directory containing one or more ``.ckpt``
+files (all are evaluated) or a single ``.ckpt`` file.
 """
 
 import argparse
@@ -64,7 +67,9 @@ NUM_TRIALS_PER_HORIZON = 500
 CONTROL_MODE = "pd_ee_delta_pose"
 OBS_MODE = "rgbd"
 # Must match training configuration
-STATE_MODE = "qpos_qvel"  # "qpos", "qpos_qvel", "tcp_pose"
+# "tcp_xytheta" matches diffusion_policy/h5_to_zarr.py (TCP raw_pose -> [x,y,yaw]),
+# which is what the planar-pushT diffusion-policy checkpoints expect for agent_pos.
+STATE_MODE = "tcp_xytheta"  # "qpos", "qpos_qvel", "tcp_pose", "tcp_xytheta"
 # Env control_freq is fixed at 20 Hz by SimConfig. The diffusion policy is
 # queried at POLICY_QUERY_HZ; each predicted action is held for
 # POLICY_STEPS_PER_QUERY env steps via FrameSkipWrapper. Train the policy on
@@ -72,7 +77,7 @@ STATE_MODE = "qpos_qvel"  # "qpos", "qpos_qvel", "tcp_pose"
 ENV_CONTROL_HZ = 20
 POLICY_QUERY_HZ = 10
 POLICY_STEPS_PER_QUERY = ENV_CONTROL_HZ // POLICY_QUERY_HZ  # 2
-MAX_EPISODE_STEPS = 400  # in env steps (= 20s at 20 Hz)
+MAX_EPISODE_STEPS = 1600  # in env steps (= 80s at 80 Hz)
 NUM_ENVS = 16
 INTERSECTION_THRESH = 0.75
 
@@ -83,10 +88,12 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument(
+        "--checkpoints",
         "--checkpoints-dir",
+        dest="checkpoints",
         type=str,
         default="/home/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints",
-        help="directory containing .ckpt files (all will be evaluated)",
+        help=("either a directory containing .ckpt files (all will be evaluated) or a single .ckpt file"),
     )
     p.add_argument("--action-horizons", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8])
     p.add_argument("--seed", type=int, default=1)
@@ -355,14 +362,27 @@ def main():
         torch.cuda.manual_seed(args.seed)
 
     # --- discover checkpoints ---
-    checkpoints_dir = Path(args.checkpoints_dir)
-    if not checkpoints_dir.exists():
-        raise ValueError(f"Checkpoints directory does not exist: {args.checkpoints_dir}")
-    checkpoints = sorted(checkpoints_dir.glob("*.ckpt"))
-    if not checkpoints:
-        raise ValueError(f"No .ckpt files found in directory: {args.checkpoints_dir}")
+    # Accept either a directory of .ckpt files or a single .ckpt file.
+    checkpoints_path = Path(args.checkpoints)
+    if not checkpoints_path.exists():
+        raise ValueError(f"Checkpoints path does not exist: {args.checkpoints}")
+    if checkpoints_path.is_file():
+        if checkpoints_path.suffix != ".ckpt":
+            raise ValueError(f"Expected a .ckpt file, got: {args.checkpoints}")
+        checkpoints = [checkpoints_path]
+        # Eval output anchor sits next to the checkpoints/ folder, same as
+        # the directory case below.
+        eval_anchor_dir = checkpoints_path.parent.parent
+        print(f"\nFound 1 checkpoint: {checkpoints_path}")
+    elif checkpoints_path.is_dir():
+        checkpoints = sorted(checkpoints_path.glob("*.ckpt"))
+        if not checkpoints:
+            raise ValueError(f"No .ckpt files found in directory: {args.checkpoints}")
+        eval_anchor_dir = checkpoints_path.parent
+        print(f"\nFound {len(checkpoints)} checkpoint(s) in {args.checkpoints}:")
+    else:
+        raise ValueError(f"Checkpoints path is neither a file nor a directory: {args.checkpoints}")
     CHECKPOINTS = [str(ckpt) for ckpt in checkpoints]
-    print(f"\nFound {len(CHECKPOINTS)} checkpoint(s) in {args.checkpoints_dir}:")
     for i, ckpt in enumerate(CHECKPOINTS, 1):
         print(f"  {i}. {Path(ckpt).name}")
     print()
@@ -374,7 +394,7 @@ def main():
         out_dir = Path(args.output_dir)
     else:
         now = datetime.datetime.now()
-        out_dir = checkpoints_dir.parent / "eval" / now.strftime("%Y-%m-%d") / now.strftime("%H-%M-%S")
+        out_dir = eval_anchor_dir / "eval" / now.strftime("%Y-%m-%d") / now.strftime("%H-%M-%S")
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Writing results to {out_dir}/\n")
 

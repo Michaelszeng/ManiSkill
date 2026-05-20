@@ -74,14 +74,13 @@ class DiffusionPolicy:
         self.policy = policy
         self.cfg = cfg
 
-        # Find camera keys and expected image sizes from config
+        # Find camera keys expected by the model from its shape_meta config.
+        # Images are fed as HWC uint8 (the encoder handles permute + scaling).
         camera_keys = []
-        camera_shapes = {}  # Store expected (C, H, W) for each camera
         if self.obs_mode != "state":
             for key, val in cfg.shape_meta.obs.items():
                 if val.get("type") == "rgb":
                     camera_keys.append(key)
-                    camera_shapes[key] = val["shape"]  # [C, H, W]
         print(f"Using cameras: {camera_keys}")
         self.camera_keys = camera_keys
 
@@ -89,13 +88,28 @@ class DiffusionPolicy:
         self.action_start_idx = self.cfg.n_obs_steps - 1
         self.action_end_idx = self.action_start_idx + self.n_action_steps
 
+    @staticmethod
+    def _tcp_pose_to_xytheta(tcp_pose):
+        """Convert TCP raw_pose (..., 7) [x,y,z,qw,qx,qy,qz] -> (..., 3) [x, y, yaw].
+
+        Matches the training-data preprocessing in ``diffusion_policy/h5_to_zarr.py``.
+        """
+        x = tcp_pose[..., 0]
+        y = tcp_pose[..., 1]
+        qw = tcp_pose[..., 3]
+        qx = tcp_pose[..., 4]
+        qy = tcp_pose[..., 5]
+        qz = tcp_pose[..., 6]
+        yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+        return np.stack([x, y, yaw], axis=-1)
+
     def extract_state(self, obs, state_mode, obs_mode, env_idx=None):
         """
         Extract robot state from observation based on mode. Used in state mode only.
 
         Args:
             obs: ManiSkill observation (dict for state_dict/rgbd modes, or flat tensor for state mode)
-            state_mode: One of "qpos", "qpos_qvel", "tcp_pose"
+            state_mode: One of "qpos", "qpos_qvel", "tcp_pose", "tcp_xytheta"
             obs_mode: The observation mode used ("state", "state_dict", "rgbd", etc.)
             env_idx: Index of environment to extract from (for vectorized envs). If None, returns all envs.
 
@@ -131,6 +145,11 @@ class DiffusionPolicy:
                 if self.tcp_pose_slice is None:
                     raise ValueError("TCP_POSE_SLICE must be specified for tcp_pose mode")
                 return obs_np[..., self.tcp_pose_slice[0] : self.tcp_pose_slice[1]]
+            elif state_mode == "tcp_xytheta":
+                if self.tcp_pose_slice is None:
+                    raise ValueError("TCP_POSE_SLICE must be specified for tcp_xytheta mode")
+                tcp = obs_np[..., self.tcp_pose_slice[0] : self.tcp_pose_slice[1]]
+                return self._tcp_pose_to_xytheta(tcp)
             else:
                 raise ValueError(f"Unknown state mode: {state_mode}")
 
@@ -173,6 +192,16 @@ class DiffusionPolicy:
                 if env_idx is not None:
                     state = state[env_idx]
                 return state
+            elif state_mode == "tcp_xytheta":
+                state = obs["extra"]["tcp_pose"]
+                if isinstance(state, torch.Tensor):
+                    state = state.cpu().numpy()
+
+                if state.ndim == 1:
+                    state = state[np.newaxis, :]
+                if env_idx is not None:
+                    state = state[env_idx]
+                return self._tcp_pose_to_xytheta(state)
             else:
                 raise ValueError(f"Unknown state mode: {state_mode}")
 
@@ -226,7 +255,13 @@ class DiffusionPolicy:
 
     def extract_and_process_image(self, obs, camera_key, env_idx=None):
         """
-        Extract and process camera image from observation. Used in rgbd mode only.
+        Extract camera image from observation in the HWC uint8 [0, 255] layout
+        the diffusion-policy training pipeline expects.
+
+        The RobomimicObsEncoder (see diffusion_policy/model/vision/robomimic_config_util.py)
+        handles permutation to CHW and rescaling to [-1, 1] internally, so we must NOT
+        pre-permute or pre-normalize here -- doing so produced a shape mismatch in
+        VisualCore.forward (e.g. [B, W, C, H] instead of [B, C, H, W]).
 
         Args:
             obs: ManiSkill observation dict
@@ -234,42 +269,27 @@ class DiffusionPolicy:
             env_idx: Index of environment to extract from (for vectorized envs). If None, returns all envs.
 
         Returns:
-            rgb: Processed image in C x H x W format (or num_envs x C x H x W), normalized to [0, 1]
+            rgb: uint8 image in (H, W, C) layout, or (num_envs, H, W, C) when env_idx is None.
         """
-        # Extract camera image from ManiSkill observation
         rgb = obs["sensor_data"][camera_key]["rgb"]
 
-        # Convert to numpy if needed
         if isinstance(rgb, torch.Tensor):
             rgb = rgb.cpu().numpy()
 
-        # Handle batch dimension
         # rgb shape: (num_envs, H, W, C) for num_envs > 1, or (H, W, C) for num_envs = 1
-        is_batched = len(rgb.shape) == 4
+        if rgb.ndim == 3:
+            rgb = rgb[np.newaxis, ...]  # → (1, H, W, C)
 
-        if not is_batched:
-            # Single env: (H, W, C) -> add batch dim -> (1, H, W, C)
-            rgb = rgb[np.newaxis, ...]
-
-        # Extract specific environment if requested
         if env_idx is not None:
-            rgb = rgb[env_idx]  # (H, W, C)
-            # Transpose from H x W x C to C x H x W
-            rgb = np.transpose(rgb, (2, 0, 1))
-        else:
-            # Keep batch: (num_envs, H, W, C) -> (num_envs, C, H, W)
-            rgb = np.transpose(rgb, (0, 3, 1, 2))
+            rgb = rgb[env_idx]  # → (H, W, C)
 
-        # # Take only RGB channels (in case of RGBA with C=4)
-        # if env_idx is not None:
-        #     if rgb.shape[0] == 4:
-        #         rgb = rgb[:3]
-        # else:
-        #     if rgb.shape[1] == 4:
-        #         rgb = rgb[:, :3]
+        # Drop alpha channel if present so we always feed (..., 3) to the encoder.
+        if rgb.shape[-1] == 4:
+            rgb = rgb[..., :3]
 
-        # Normalize to [0, 1] range
-        rgb = rgb.astype(np.float32) / 255.0
+        # Keep uint8 [0, 255]; passthrough normalizer + encoder will cast/scale.
+        if rgb.dtype != np.uint8:
+            rgb = rgb.astype(np.uint8)
 
         return rgb
 
@@ -284,9 +304,7 @@ class DiffusionPolicy:
         self.last_frames = None
         if record_video:
             if self.env.render_mode != "rgb_array":
-                raise RuntimeError(
-                    f"record_video=True requires render_mode='rgb_array', got {self.env.render_mode!r}"
-                )
+                raise RuntimeError(f"record_video=True requires render_mode='rgb_array', got {self.env.render_mode!r}")
             frame_buffers = [[] for _ in range(self.num_envs)]
         # For vectorized envs, pass list of seeds
         if self.num_envs > 1:
@@ -356,7 +374,7 @@ class DiffusionPolicy:
                     image_batch = []
                     for env_idx in envs_need_actions:
                         image_batch.append(np.stack(list(self.image_buffers[env_idx][camera_key]), axis=0))
-                    image_batch = np.stack(image_batch, axis=0)  # (batch_size, n_obs_steps, C, H, W)
+                    image_batch = np.stack(image_batch, axis=0)  # (batch_size, n_obs_steps, H, W, C) uint8
                     obs_dict["obs"][camera_key] = torch.from_numpy(image_batch).to(self.policy.device)
 
                 # Run policy inference

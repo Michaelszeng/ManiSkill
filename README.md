@@ -12,7 +12,9 @@ QT_QPA_PLATFORM=xcb
 For policy evaluation, clone my [diffusion policy repo](https://github.com/Michaelszeng/diffusion-policy-experiments) and install (along with required dependencies):
 ```bash
 pip install -e /home/michzeng/diffusion-policy --no-deps
-pip install -r diffusion_policy_requirements.txt
+pip install dill==0.3.5.1
+pip install accelerate==0.13.2
+pip install numba
 ```
 
 
@@ -35,10 +37,8 @@ pip install torch
 # 4. Install diffusion-policy
 pip install -e /data/locomotion/michzeng/diffusion-policy-experiments --no-deps
 pip install dill==0.3.5.1
-pip install robomimic --no-deps
-pip install einops==0.4.1
-pip install pandas
 pip install accelerate==0.13.2
+pip install numba
 ```
 
 
