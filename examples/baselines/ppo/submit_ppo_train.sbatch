@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=ppo_planar_pusht
 #SBATCH --account=locomotion
-#SBATCH --partition=vision-shared-rtx3090
+#SBATCH --partition=vision-shared-rtx2080ti
 #SBATCH --exclude=freeman-titanrtx-2,freeman-titanrtx-1
 #SBATCH --qos=shared-if-available
 #SBATCH --nodes=1
@@ -9,7 +9,7 @@
 #SBATCH --gpus-per-node=1
 #SBATCH --cpus-per-task=16
 #SBATCH --mem=64G
-#SBATCH --time=48:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=logs/slurm-%j.out
 #SBATCH --error=logs/slurm-%j.err
 #SBATCH --requeue
@@ -48,13 +48,25 @@ echo "SLURM Node:           $HOSTNAME"
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 echo "SLURM_SUBMIT_DIR:     $SLURM_SUBMIT_DIR"
 
+# --- WANDB Authentication ---
+export WANDB_USERNAME="michzeng"
+SECRETS_FILE="$SLURM_SUBMIT_DIR/.secrets"
+if [ -f "$SECRETS_FILE" ]; then
+    source "$SECRETS_FILE"
+    echo "Loaded secrets from $SECRETS_FILE"
+else
+    echo "ERROR: $SECRETS_FILE not found. Create it from .secrets.template before submitting." >&2
+    exit 1
+fi
+echo "WANDB_USERNAME and WANDB_API_KEY set for authentication."
+
 # --- Environment setup ---
 echo "Changing directory to $SLURM_SUBMIT_DIR"
 cd "$SLURM_SUBMIT_DIR" || { echo "Failed to change directory to $SLURM_SUBMIT_DIR"; exit 1; }
 
 # Conda setup
 source /data/locomotion/michzeng/miniconda3/etc/profile.d/conda.sh
-conda activate Maniskill
+conda activate /data/locomotion/michzeng/conda_envs/Maniskill
 # Restore CUDA_VISIBLE_DEVICES in case conda activation cleared it.
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${SLURM_STEP_GPUS:-${SLURM_JOB_GPUS:-0}}}"
 echo "CUDA_VISIBLE_DEVICES after conda activate: ${CUDA_VISIBLE_DEVICES}"

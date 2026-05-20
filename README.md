@@ -28,6 +28,7 @@ conda activate /data/locomotion/michzeng/conda_envs/Maniskill
 
 # 2. Install ManiSkill (from the cloned repo root)
 pip install -e .
+pip install torchrl tensordict wandb
 
 # 3. Install torch
 pip install torch

@@ -1,6 +1,7 @@
 env/
 runs/
 wandb/
+.secrets
 *.npz
 *.zarr
 
