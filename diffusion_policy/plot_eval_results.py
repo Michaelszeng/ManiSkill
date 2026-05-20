@@ -12,16 +12,23 @@ Example usage
 
 Single experiment:
    python diffusion_policy/plot_eval_results.py \
-       --experiment-path outputs/maniskill/2_obs/eval/2026-05-14/15-30-00 \
-       --plot-name "Planar Push-T (500 Trials)" \
-       --output outputs/plots/2_obs_planar_pusht.png
+       --experiment-path outputs/2_obs_human_expert \
+       --plot-name "Planar Push-T - Human Expert, 2 obs (500 Trials)" \
+       --output outputs/plots/2_obs_human_expert.png
 
 Multiple experiments with custom legend labels:
    python diffusion_policy/plot_eval_results.py \
-       --experiment-path outputs/run_a outputs/run_b \
-       --experiment-name "Run A" "Run B" \
-       --plot-name "Planar Push-T - Run A vs Run B (500 Trials)" \
-       --output outputs/plots/comparison_a_vs_b.png
+       --experiment-path outputs/2_obs_human_expert_attention_double_enc outputs/4_obs_human_expert_attention_double_enc \
+       --experiment-name "To=2" "To=4" \
+       --plot-name "Planar Push-T - Context Length Ablation (500 Trials)" \
+       --output outputs/plots/context_length_ablation.png
+
+Single experiment, all checkpoints overlaid:
+   python diffusion_policy/plot_eval_results.py \
+       --experiment-path outputs/2_obs_human_expert_attention_double_enc \
+       --all-checkpoints \
+       --plot-name "Planar Push-T - 2 obs Attention Double Enc - All Checkpoints" \
+       --output outputs/plots/2_obs_attention_double_enc_all_ckpts.png
 
 Don't set --output to skip saving. Set --show to open an interactive window.
 """

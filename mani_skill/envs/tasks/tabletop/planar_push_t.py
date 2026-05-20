@@ -610,7 +610,7 @@ class PlanarPushTEnv(BaseEnv):
         # giving the robot a little help by rewarding it for having its end-effector close to the tee center of mass
         tcp_to_push_pose = self.tee.pose.p - self.agent.tcp.pose.p
         tcp_to_push_pose_dist = torch.linalg.norm(tcp_to_push_pose, axis=1)
-        reward += ((1 - torch.tanh(5 * tcp_to_push_pose_dist)).sqrt()) / 40
+        reward += ((1 - torch.tanh(5 * tcp_to_push_pose_dist)).sqrt()) / 60
 
         # giving robot a little help by rewarding it for having orientation close to target
         # Compute quaternion difference from target orientation

@@ -27,7 +27,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
-import dill
 import gymnasium as gym
 import imageio
 import numpy as np
@@ -77,7 +76,7 @@ STATE_MODE = "tcp_xytheta"  # "qpos", "qpos_qvel", "tcp_pose", "tcp_xytheta"
 ENV_CONTROL_HZ = 20
 POLICY_QUERY_HZ = 10
 POLICY_STEPS_PER_QUERY = ENV_CONTROL_HZ // POLICY_QUERY_HZ  # 2
-MAX_EPISODE_STEPS = 1600  # in env steps (= 80s at 80 Hz)
+MAX_EPISODE_STEPS = 1400  # in env steps (= 70s at 20 Hz)
 NUM_ENVS = 16
 INTERSECTION_THRESH = 0.75
 
@@ -492,7 +491,7 @@ def main():
 
     overall_pkl_path = out_dir / "overall_results.pkl"
     with open(overall_pkl_path, "wb") as f:
-        dill.dump(
+        pickle.dump(
             {
                 "best_results": best_results,
                 "full_results": results,

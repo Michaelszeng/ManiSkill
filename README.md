@@ -83,22 +83,8 @@ python diffusion_policy/gamepad_teleop.py --output maniskill_planar_push_t.zarr
 
 Train PPO policy:
 ```bash
-python examples/baselines/ppo/ppo_fast.py \
-  --env_id="Planar-PushT-v1" \
-  --num_envs=4096 \
-  --num-steps=16 \
-  --update_epochs=8 \
-  --num_minibatches=32 \
-  --gamma=0.99 \
-  --total_timesteps=2_000_000_000 \
-  --num_eval_steps=400 \
-  --num_eval_envs=16 \
-  --control_mode=pd_ee_delta_pose \
-  --ent-coef=0.005 \
-  --cudagraphs
+sbatch examples/baselines/ppo/submit_ppo_train.sbatch
 ```
-
-Here, we used increased entropy to try to maintain a more stochastic/diverse policy
 
 Optionally (to continue training), add:
 ```bash
@@ -111,9 +97,9 @@ python examples/baselines/ppo/ppo_fast.py \
   --env_id="Planar-PushT-v1" \
   --control-mode="pd_ee_delta_pose" \
   --evaluate \
-  --checkpoint=/home/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1766536544/checkpoints/final_ckpt.pt \
+  --checkpoint=/data/locomotion/michzeng/ManiSkill/runs/Planar-PushT-v1__ppo_fast__1__1779308025/checkpoints/ckpt_726.pt \
   --num_eval_envs=1 \
-  --num-eval-steps=100000 \
+  --num-eval-steps=50000 \
   --save-trajectory \
   --no-capture-video \
   --eval-partial-reset \
@@ -136,7 +122,7 @@ python -m mani_skill.trajectory.replay_trajectory \
     -n 16 \
     --save-traj \
     --use-env-states \
-    --count 500
+    --count 300
 ```
 
 Convert `.h5` dataset to `.zarr` format for training with the [diffusion policy repo](https://github.com/Michaelszeng/diffusion-policy-experiments)

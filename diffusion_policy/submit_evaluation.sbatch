@@ -2,7 +2,7 @@
 #SBATCH --job-name=evaluate_pusht
 #SBATCH --account=locomotion
 #SBATCH --partition=vision-shared-titanrtx
-#SBATCH --exclude=freeman-titanrtx-2,freeman-titanrtx-1
+#SBATCH --exclude=freeman-titanrtx-2,freeman-titanrtx-1,gpu20-2.drl
 #SBATCH --qos=shared-if-available
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
@@ -42,8 +42,8 @@ echo "ACTION_HORIZONS: ${ACTION_HORIZONS[*]}"
 # horizon).
 # CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/2_obs_human_expert/checkpoints"
 # CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/2_obs_markovian_expert/checkpoints"
-# CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/2_obs_human_expert_attention_double_enc/checkpoints"
-CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/4_obs_human_expert_attention_double_enc/checkpoints"
+CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/2_obs_human_expert_attention_double_enc/checkpoints"
+# CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/4_obs_human_expert_attention_double_enc/checkpoints"
 # CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/8_obs_human_expert_attention_double_enc/checkpoints"
 # CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/12_obs_human_expert_attention_double_enc/checkpoints"
 # CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/16_obs_human_expert_attention_double_enc/checkpoints"
