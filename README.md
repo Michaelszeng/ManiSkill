@@ -16,6 +16,32 @@ pip install -r diffusion_policy_requirements.txt
 ```
 
 
+### Installation on CSAIL SLURM Cluster:
+
+```bash
+# 1. Create + activate env
+source /data/locomotion/michzeng/miniconda3/etc/profile.d/conda.sh
+conda create -p /data/locomotion/michzeng/conda_envs/Maniskill \
+  -c conda-forge --override-channels --strict-channel-priority \
+  python=3.11 pip libvulkan-loader vulkan-tools
+conda activate /data/locomotion/michzeng/conda_envs/Maniskill
+
+# 2. Install ManiSkill (from the cloned repo root)
+pip install -e .
+
+# 3. Install torch
+pip install torch
+
+# 4. Install diffusion-policy
+pip install -e /data/locomotion/michzeng/diffusion-policy-experiments --no-deps
+pip install dill==0.3.5.1
+pip install robomimic --no-deps
+pip install einops==0.4.1
+pip install pandas
+pip install accelerate==0.13.2
+```
+
+
 ## Data Collection
 
 ### Teleop Data Collection
@@ -98,6 +124,14 @@ Now, you are ready to train!
 
 
 ## Diffusion Policy Evaluation
+
+```bash
+python diffusion_policy/evaluation.py \
+        --checkpoints-dir /path/to/checkpoints \
+        --action-horizons 1 2 3 4 5 6 8 10 12 15 \
+        --n-video-trials 20 \
+        --output-dir outputs/maniskill/2_obs/eval
+```
 
 
 
