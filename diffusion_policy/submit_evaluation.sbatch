@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=evaluate_pusht
 #SBATCH --account=locomotion
-#SBATCH --partition=vision-shared-rtx3090
+#SBATCH --partition=vision-shared-titanrtx
 #SBATCH --exclude=freeman-titanrtx-2,freeman-titanrtx-1
 #SBATCH --qos=shared-if-available
 #SBATCH --nodes=1
@@ -40,7 +40,15 @@ echo "ACTION_HORIZONS: ${ACTION_HORIZONS[*]}"
 # ============================================================================
 # Directory containing one or more .ckpt files (all will be evaluated at each
 # horizon).
-CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy/data/outputs/maniskill/2_obs/checkpoints"
+# CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/2_obs_human_expert/checkpoints"
+# CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/2_obs_markovian_expert/checkpoints"
+# CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/2_obs_human_expert_attention_double_enc/checkpoints"
+CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/4_obs_human_expert_attention_double_enc/checkpoints"
+# CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/8_obs_human_expert_attention_double_enc/checkpoints"
+# CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/12_obs_human_expert_attention_double_enc/checkpoints"
+# CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/16_obs_human_expert_attention_double_enc/checkpoints"
+# CHECKPOINT_PATH="/data/locomotion/michzeng/diffusion-policy-experiments/data/outputs/maniskill/20_obs_human_expert_attention_double_enc/checkpoints"
+
 
 # Number of trials per (checkpoint, action_horizon) to save MP4 videos for.
 # 0 = off, -1 = all. Anything > 0 forces rgb_array rendering (a bit slower).
@@ -60,7 +68,7 @@ echo "Changing directory to $SLURM_SUBMIT_DIR"
 cd "$SLURM_SUBMIT_DIR" || { echo "Failed to change directory to $SLURM_SUBMIT_DIR"; exit 1; }
 # Conda setup — adjust env name to whatever Python 3.10+ env you use for ManiSkill.
 source /data/locomotion/michzeng/miniconda3/etc/profile.d/conda.sh
-conda activate maniskill
+conda activate /data/locomotion/michzeng/conda_envs/Maniskill
 # conda activation scripts can clear CUDA_VISIBLE_DEVICES on some environments.
 # Restore it from SLURM's GPU assignment if it was unset.
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${SLURM_STEP_GPUS:-${SLURM_JOB_GPUS:-0}}}"
@@ -79,8 +87,11 @@ echo "ACTION_HORIZONS:  ${ACTION_HORIZONS[*]}"
 echo "N_VIDEO_TRIALS:   $N_VIDEO_TRIALS"
 echo "=========================================="
 
+export PYTHONUNBUFFERED=1
+
 python diffusion_policy/evaluation.py \
     --checkpoints-dir "${CHECKPOINT_PATH}" \
     --action-horizons "${ACTION_HORIZONS[@]}" \
     --n-video-trials "${N_VIDEO_TRIALS}" \
+    --output-dir "outputs/${EXPERIMENT_NAME}" \
     --resume

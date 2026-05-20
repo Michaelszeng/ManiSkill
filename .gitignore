@@ -2,6 +2,7 @@ env/
 runs/
 wandb/
 outputs/
+logs/
 .secrets
 *.npz
 *.zarr

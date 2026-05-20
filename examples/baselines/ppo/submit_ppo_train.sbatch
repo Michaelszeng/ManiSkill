@@ -40,7 +40,7 @@ TOTAL_TIMESTEPS=1_000_000_000
 NUM_EVAL_STEPS=400
 NUM_EVAL_ENVS=16
 CONTROL_MODE="pd_ee_delta_pose"
-ENT_COEF=0.01
+ENT_COEF=0.015
 # ============================================================================
 
 echo "SLURM Job ID:         $SLURM_JOB_ID"

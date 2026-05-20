@@ -15,6 +15,10 @@ pip install -e /home/michzeng/diffusion-policy --no-deps
 pip install dill==0.3.5.1
 pip install accelerate==0.13.2
 pip install numba
+pip install hydra-core
+pip install zarr
+pip install torchvision
+pip install diffusers
 ```
 
 
@@ -30,16 +34,40 @@ conda activate /data/locomotion/michzeng/conda_envs/Maniskill
 
 # 2. Install ManiSkill (from the cloned repo root)
 pip install -e .
-pip install torchrl tensordict wandb
+pip install wandb
 
-# 3. Install torch
-pip install torch
+# 3. Install PyTorch (CUDA 12.9 build — matches the CSAIL cluster driver).
+#    The CSAIL nodes ship NVIDIA driver 575.x, which supports CUDA <= 12.9.
+#    Do NOT `pip install torch` unpinned — it will pull the cu130 build and
+#    fail at runtime with "NVIDIA driver on your system is too old".
+#    torchvision must match torch (0.26.x <-> 2.11.x).
+pip install --index-url https://download.pytorch.org/whl/cu129 \
+    "torch==2.11.0" "torchvision==0.26.0"
 
-# 4. Install diffusion-policy
+# 4. Install torchrl + tensordict pinned to versions compatible with torch 2.11.
+#    --no-deps prevents pip from trying to upgrade torch back to the latest.
+pip install --no-deps "torchrl==0.11.1" "tensordict==0.11.0"
+
+# 5. Install diffusion-policy itself with --no-deps.
+#    diffusion-policy-experiments/pyproject.toml pins ancient versions
+#    (torch==2.3.1, torchvision==0.18.1, diffusers==0.11.1, numpy==1.26.4, ...)
+#    that would clobber step 3 and break the rest of the env. --no-deps lets
+#    us install the editable package without dragging in those pins.
 pip install -e /data/locomotion/michzeng/diffusion-policy-experiments --no-deps
-pip install dill==0.3.5.1
-pip install accelerate==0.13.2
-pip install numba
+
+# 6. Install diffusion-policy's runtime dependencies (unpinned, modern versions).
+#    These are the deps --no-deps just skipped but that the evaluation/training
+#    code imports at runtime (robomimic needs termcolor; pusht env needs
+#    pymunk + shapely; dataset loaders need datasets/boto3; etc.).
+pip install accelerate==0.13.2 numba hydra-core zarr diffusers \
+    termcolor pymunk shapely einops scikit-image scikit-video \
+    threadpoolctl boto3 datasets cffi cython \
+    imageio imageio-ffmpeg
+
+# 7. Pin dill==0.3.5.1 (required to unpickle checkpoints saved by the upstream
+#    Chi diffusion_policy code). --no-deps keeps `datasets`/`multiprocess`
+#    from silently upgrading it to 0.4.x.
+pip install --no-deps "dill==0.3.5.1"
 ```
 
 
