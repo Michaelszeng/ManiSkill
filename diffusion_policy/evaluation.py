@@ -227,6 +227,33 @@ def _load_existing_run(run_dir: Path):
     return saved.get("trials", []), saved.get("n_success", 0), saved.get("n_total", 0)
 
 
+def _repair_csv_and_summary(run_dir: Path, *, checkpoint: str, action_horizon: int) -> tuple:
+    """Rewrite results.csv and summary.txt to match results.pkl.
+
+    Returns (csv_file, csv_writer) opened in append mode so the caller can
+    continue writing new rows without overwriting prior results.
+    """
+    pkl_path = run_dir / "results.pkl"
+    with open(pkl_path, "rb") as f:
+        saved = pickle.load(f)
+    csv_path = run_dir / "results.csv"
+    with open(csv_path, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        w.writeheader()
+        w.writerows(saved["trials"])
+    _write_summary(
+        run_dir / "summary.txt",
+        checkpoint=checkpoint,
+        action_horizon=action_horizon,
+        n_success=saved["n_success"],
+        n_total=saved["n_total"],
+        n_target=NUM_TRIALS_PER_HORIZON,
+        trial_records=saved["trials"],
+    )
+    csv_file = open(csv_path, "a", newline="")
+    return csv_file, csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
+
+
 def evaluate_one(
     policy,
     run_dir: Path,
@@ -256,6 +283,7 @@ def evaluate_one(
     # --- resume or start fresh ---
     trial_records: list = []
     n_success = n_total = 0
+    i_start = 0
     if resume:
         prior = _load_existing_run(run_dir)
         if prior is not None and prior[2] >= num_trials:
@@ -267,14 +295,26 @@ def evaluate_one(
                 "num_trials": n_total,
                 "trials": trial_records,
             }
+        elif prior is not None and prior[2] > 0:
+            trial_records, n_success, n_total = prior
+            i_start = math.ceil(n_total / num_envs)
+            print(
+                f"  [resume] {run_dir.name}: {n_total}/{num_trials} trials done"
+                f" ({n_success}/{n_total} = {n_success / n_total:.1%});"
+                f" continuing from round {i_start + 1}"
+            )
+            csv_file, csv_writer = _repair_csv_and_summary(
+                run_dir, checkpoint=checkpoint, action_horizon=action_horizon
+            )
 
-    csv_file = open(csv_path, "w", newline="")
-    csv_writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
-    csv_writer.writeheader()
-    csv_file.flush()
+    if n_total == 0:
+        csv_file = open(csv_path, "w", newline="")
+        csv_writer = csv.DictWriter(csv_file, fieldnames=CSV_FIELDS)
+        csv_writer.writeheader()
+        csv_file.flush()
 
     n_rounds = max(1, math.ceil(num_trials / num_envs))
-    for i in range(n_rounds):
+    for i in range(i_start, n_rounds):
         episode_seed = base_seed + n_total
         # Record this round if any trial in it falls within the video budget.
         record_this_round = record_video and (n_total < video_budget)

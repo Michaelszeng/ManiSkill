@@ -34,7 +34,7 @@ CONTROL_MODE="pd_ee_delta_pose"
 NUM_EVAL_ENVS=1
 NUM_EVAL_STEPS=50000
 EVAL_TEMPERATURE=0.0
-REPLAY_COUNT=300
+REPLAY_COUNT=347  # random number that is sufficiently larger than the number of episodes we actually want in the dataset (300)
 ZARR_OUTPUT=/data/locomotion/michzeng/diffusion-policy-experiments/data/diffusion_experiments/maniskill/maniskill_planar_push_t_rl_expert.zarr
 # ============================================================================
 
