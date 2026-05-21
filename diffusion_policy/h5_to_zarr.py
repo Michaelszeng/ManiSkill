@@ -15,7 +15,7 @@ Output zarr layout:
                                          env at each step -- matches the deltas
                                          recorded by diffusion_policy/gamepad_teleop.py)
     data/target         (N, 3)  float64  goal T-block pose, repeated per step
-    data/overhead_camera (N, 128, 128, 3) uint8  (mapped from h5 base_camera)
+    data/base_camera    (N, 128, 128, 3) uint8  (matches gamepad_teleop.py naming)
     data/wrist_camera   (N, 128, 128, 3) uint8  (only if present in h5)
     meta/episode_ends   (E,)    int64    cumulative step counts
 """
@@ -38,7 +38,7 @@ def _xytheta(pose7: np.ndarray) -> np.ndarray:
 
 def convert(h5_path: str, zarr_path: str, success_only: bool = False):
     states, sliders, actions, targets = [], [], [], []
-    overheads, wrists = [], []
+    base_imgs, wrists = [], []
     episode_ends, n_skipped = [], 0
     end = 0
     has_wrist = None
@@ -76,7 +76,7 @@ def convert(h5_path: str, zarr_path: str, success_only: bool = False):
                 )
             action = actions_raw.astype(np.float32)
 
-            overheads.append(t["obs/sensor_data/base_camera/rgb"][:T])
+            base_imgs.append(t["obs/sensor_data/base_camera/rgb"][:T])
 
             wrist_present = "wrist_camera" in t["obs/sensor_data"]
             if has_wrist is None:
@@ -96,20 +96,26 @@ def convert(h5_path: str, zarr_path: str, success_only: bool = False):
 
     states = np.concatenate(states); sliders = np.concatenate(sliders)
     actions = np.concatenate(actions); targets = np.concatenate(targets)
-    overheads = np.concatenate(overheads)
+    base_imgs = np.concatenate(base_imgs)
     episode_ends = np.asarray(episode_ends, dtype=np.int64)
 
-    root = zarr.open_group(zarr_path, mode="w")
+    def _write(group, name, data, chunks):
+        arr = group.create_array(name, shape=data.shape, dtype=data.dtype, chunks=chunks)
+        arr[:] = data
+
+    # zarr_format=2 writes the legacy .zgroup/.zarray layout expected by the
+    # diffusion-policy training environment (which uses zarr v2).
+    root = zarr.open_group(zarr_path, mode="w", zarr_format=2)
     d = root.create_group("data"); m = root.create_group("meta")
-    d.create_dataset("state", data=states, chunks=(1024, 3))
-    d.create_dataset("slider_state", data=sliders, chunks=(1024, 3))
-    d.create_dataset("action", data=actions, chunks=(2048, 2))
-    d.create_dataset("target", data=targets, chunks=(1024, 3))
-    d.create_dataset("overhead_camera", data=overheads, chunks=(128, 128, 128, 3))
+    _write(d, "state", states, (1024, 3))
+    _write(d, "slider_state", sliders, (1024, 3))
+    _write(d, "action", actions, (2048, 2))
+    _write(d, "target", targets, (1024, 3))
+    _write(d, "base_camera", base_imgs, (128, 128, 128, 3))
     if has_wrist:
         wrists = np.concatenate(wrists)
-        d.create_dataset("wrist_camera", data=wrists, chunks=(128, 128, 128, 3))
-    m.create_dataset("episode_ends", data=episode_ends)
+        _write(d, "wrist_camera", wrists, (128, 128, 128, 3))
+    _write(m, "episode_ends", episode_ends, (len(episode_ends),))
 
     msg = f"Wrote {len(episode_ends)} episodes, {end} steps → {zarr_path}"
     if success_only:

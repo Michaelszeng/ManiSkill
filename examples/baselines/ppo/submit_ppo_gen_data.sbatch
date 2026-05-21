@@ -21,6 +21,8 @@
 #   2. Rename trajectory files to the format expected by replay_trajectory
 #   3. Replay trajectories with RGB observations
 #   4. Convert .h5 dataset to .zarr format for diffusion policy training
+#
+# Expect this to take ~30 min to run.
 
 # ============================================================================
 # Constants
