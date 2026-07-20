@@ -172,10 +172,10 @@ python diffusion_policy/evaluation.py \
 ```
 
 Notes:
- - **`--checkpoints-dir`**: accepts either a directory of `.ckpt` files (every checkpoint is evaluated) or a single `.ckpt` file. Aliased as `--checkpoints`.
+ - **`--checkpoints-dir`**: accepts either a directory of `.ckpt` files (every checkpoint is evaluated) or a single `.ckpt` file.
  - **`--n-video-trials`**: save MP4s for the first N trials per (checkpoint, horizon). `0` disables recording (fastest), `-1` records all trials.
- - **`--output-dir`**: where results are written. If omitted, a timestamped folder is created next to the `checkpoints/` dir. Each run writes `results.csv`, `results.pkl`, and `summary.txt`, plus an `overall_summary.txt`/`overall_results.pkl` for the best checkpoint per horizon.
- - **`--resume`**: skip (checkpoint, horizon) pairs that already have all trials complete, and continue partially-finished ones from the last saved round.
+ - **`--output-dir`**: where results are written.
+ - **`--resume`**: continue partially-finished evaluations from the last saved round in the given output-dir.
  - **`--num-envs`**: number of parallel environments to use
  - **`--action-horizons`**: space-separated list of action horizons \(T_a\) to sweep; each checkpoint is run against every horizon and results are grouped under `T_a_<horizon>/` subfolders.
  - **`--num-trials-per-horizon`**: number of trials to run for each action horizon.
