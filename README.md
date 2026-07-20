@@ -261,7 +261,7 @@ We currently best support Linux based systems. There is limited support for wind
 
 ## Citation
 
-If you use this repo in your work, please:
+If you use this repo in your work, please cite:
 
 
 1. The [ManiSkill3 paper](https://arxiv.org/abs/2410.00425):
