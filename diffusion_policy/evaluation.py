@@ -59,29 +59,26 @@ class HorizonResult:
 
 
 # -----------------------------------------------------------------------------
-# Fixed configuration (kept as constants — change here, not via CLI)
+# Fixed constants (not configurable). All tunable configuration lives in
+# parse_args; main() populates the runtime config globals below from those args.
 # -----------------------------------------------------------------------------
-ENV_ID = "Planar-PushT-v1"
-NUM_TRIALS_PER_HORIZON = 500
-CONTROL_MODE = "pd_ee_delta_pose"
-OBS_MODE = "rgbd"
-# Must match training configuration
-# "tcp_xytheta" matches diffusion_policy/h5_to_zarr.py (TCP raw_pose -> [x,y,yaw]),
-# which is what the planar-pushT diffusion-policy checkpoints expect for agent_pos.
-STATE_MODE = "tcp_xytheta"  # "qpos", "qpos_qvel", "tcp_pose", "tcp_xytheta"
-# Env control_freq is fixed at 20 Hz by SimConfig. The diffusion policy is
-# queried at POLICY_QUERY_HZ; each predicted action is held for
-# POLICY_STEPS_PER_QUERY env steps via FrameSkipWrapper. Train the policy on
-# data downsampled by the same stride so action semantics match.
-ENV_CONTROL_HZ = 20
-POLICY_QUERY_HZ = 10
-POLICY_STEPS_PER_QUERY = ENV_CONTROL_HZ // POLICY_QUERY_HZ  # 2
-MAX_EPISODE_STEPS = 1400  # in env steps (= 70s at 20 Hz)
-NUM_ENVS = 16
-INTERSECTION_THRESH = 0.75
-
 CSV_FIELDS = ["trial", "result", "reward", "trial_time"]
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Runtime configuration, populated by main() from the parsed CLI args (see
+# parse_args for defaults). Declared here so the rest of the module can read
+# them as globals; the values below are placeholders overwritten at startup.
+ENV_ID: str = ""
+NUM_TRIALS_PER_HORIZON: int = 0
+CONTROL_MODE: str = ""
+OBS_MODE: str = ""
+STATE_MODE: str = ""
+ENV_CONTROL_HZ: int = 0
+POLICY_QUERY_HZ: int = 0
+POLICY_STEPS_PER_QUERY: int = 0
+MAX_EPISODE_STEPS: int = 0
+NUM_ENVS: int = 0
+INTERSECTION_THRESH: float = 0.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -96,6 +93,53 @@ def parse_args() -> argparse.Namespace:
     )
     p.add_argument("--action-horizons", type=int, nargs="+", default=[1, 2, 3, 4, 5, 6, 7, 8])
     p.add_argument("--seed", type=int, default=1)
+    p.add_argument("--env-id", type=str, default="Planar-PushT-v1", help="ManiSkill environment id")
+    p.add_argument(
+        "--num-trials-per-horizon",
+        type=int,
+        default=500,
+        help="number of trials to run per (checkpoint, action_horizon) pair",
+    )
+    p.add_argument("--control-mode", type=str, default="pd_ee_delta_pose", help="env control mode")
+    p.add_argument("--obs-mode", type=str, default="rgbd", help="env observation mode")
+    p.add_argument(
+        "--state-mode",
+        type=str,
+        default="tcp_xytheta",
+        choices=["qpos", "qpos_qvel", "tcp_pose", "tcp_xytheta"],
+        # "tcp_xytheta" matches diffusion_policy/h5_to_zarr.py (TCP raw_pose ->
+        # [x,y,yaw]), which is what the planar-pushT checkpoints expect.
+        help="agent_pos representation; must match the training configuration",
+    )
+    # Env control_freq is 20 Hz by SimConfig. The policy is queried at
+    # --policy-query-hz and each predicted action is held for
+    # (env-control-hz // policy-query-hz) env steps via FrameSkipWrapper. Train
+    # the policy on data downsampled by the same stride so semantics match.
+    p.add_argument(
+        "--env-control-hz",
+        type=int,
+        default=20,
+        help="env control frequency (Hz)",
+    )
+    p.add_argument(
+        "--policy-query-hz",
+        type=int,
+        default=10,
+        help="policy query frequency (Hz); each action is held for (env-control-hz // policy-query-hz) env steps",
+    )
+    p.add_argument(
+        "--max-episode-steps",
+        type=int,
+        default=1400,
+        help="max episode length in env steps (1400 = 70s at 20 Hz)",
+    )
+    p.add_argument("--num-envs", type=int, default=16, help="number of parallel environments")
+    p.add_argument(
+        "--intersection-thresh",
+        type=float,
+        default=0.75,
+        help="T-shape intersection-over-union success threshold",
+    )
     p.add_argument(
         "--output-dir",
         type=str,
@@ -123,9 +167,9 @@ def parse_args() -> argparse.Namespace:
         default=0,
         help="save MP4 videos for the first N trials per (ckpt, horizon). 0=off, -1=all",
     )
-    # One frame is captured per high-level (policy-query) step, so default fps
-    # matches POLICY_QUERY_HZ for real-time playback.
-    p.add_argument("--video-fps", type=int, default=POLICY_QUERY_HZ)
+    # One frame is captured per high-level (policy-query) step, so fps defaults
+    # to --policy-query-hz for real-time playback (resolved in main()).
+    p.add_argument("--video-fps", type=int, default=None)
     return p.parse_args()
 
 
@@ -388,6 +432,26 @@ def evaluate_one(
 
 def main():
     args = parse_args()
+
+    # Overwrite module-level config globals with the parsed CLI values so the
+    # rest of the module (which reads these globals directly) uses them.
+    global ENV_ID, NUM_TRIALS_PER_HORIZON, CONTROL_MODE, OBS_MODE, STATE_MODE
+    global ENV_CONTROL_HZ, POLICY_QUERY_HZ, POLICY_STEPS_PER_QUERY
+    global MAX_EPISODE_STEPS, NUM_ENVS, INTERSECTION_THRESH
+    ENV_ID = args.env_id
+    NUM_TRIALS_PER_HORIZON = args.num_trials_per_horizon
+    CONTROL_MODE = args.control_mode
+    OBS_MODE = args.obs_mode
+    STATE_MODE = args.state_mode
+    ENV_CONTROL_HZ = args.env_control_hz
+    POLICY_QUERY_HZ = args.policy_query_hz
+    POLICY_STEPS_PER_QUERY = ENV_CONTROL_HZ // POLICY_QUERY_HZ
+    MAX_EPISODE_STEPS = args.max_episode_steps
+    NUM_ENVS = args.num_envs
+    INTERSECTION_THRESH = args.intersection_thresh
+    
+    if args.video_fps is None:
+        args.video_fps = POLICY_QUERY_HZ
 
     if args.n_video_trials != 0 and not args.fast_mode:
         raise SystemExit(

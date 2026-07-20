@@ -18,17 +18,10 @@ Single experiment:
 
 Multiple experiments with custom legend labels:
    python diffusion_policy/plot_eval_results.py \
-       --experiment-path outputs/2_obs_human_expert_attention_double_enc outputs/4_obs_human_expert_attention_double_enc \
-       --experiment-name "To=2" "To=4" \
-       --plot-name "Planar Push-T - Context Length Ablation (500 Trials)" \
-       --output outputs/plots/context_length_ablation.png
-
-Single experiment, all checkpoints overlaid:
-   python diffusion_policy/plot_eval_results.py \
-       --experiment-path outputs/2_obs_human_expert_attention_double_enc \
-       --all-checkpoints \
-       --plot-name "Planar Push-T - 2 obs Attention Double Enc - All Checkpoints" \
-       --output outputs/plots/2_obs_attention_double_enc_all_ckpts.png
+       --experiment-path outputs/2_obs_human_expert outputs/2_obs_rl_expert \
+       --experiment-name "Human Expert" "RL Expert" \
+       --plot-name "Planar Push-T - Human Expert vs. RL Expert (500 Trials)" \
+       --output outputs/plots/human_expert_vs_rl_expert.png
 
 Don't set --output to skip saving. Set --show to open an interactive window.
 """
@@ -113,7 +106,8 @@ def _parse_horizon(dirname: str) -> Optional[int]:
 def collect_best_results(experiment_path: Path) -> List[CheckpointResult]:
     """For each T_a_<N> sub-directory, find the best checkpoint by success rate."""
     if not experiment_path.exists():
-        raise FileNotFoundError(f"Experiment path '{experiment_path}' does not exist.")
+        print(f"Warning: experiment path '{experiment_path}' does not exist. Skipping.")
+        return []
 
     results: List[CheckpointResult] = []
     for horizon_dir in sorted(experiment_path.iterdir()):
