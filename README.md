@@ -97,6 +97,13 @@ Key constants to set:
 Follow these instructions for installation onto the SLURM cluster:
 
 ```bash
+# 0. Make sure pip installs land in the env and that imports never silently fall
+#    back to user-level site-packages in your home directory. Without this, an
+#    env can appear to work on the login node while failing on compute nodes
+#    with errors like "ModuleNotFoundError: No module named 'sapien'" (the
+#    sbatch scripts override HOME, which moves the user site-packages path).
+export PYTHONNOUSERSITE=1
+
 # 1. Create + activate env
 conda create -p PATH-TO/conda_envs/Maniskill \
   -c conda-forge --override-channels --strict-channel-priority \
@@ -113,8 +120,9 @@ pip install --index-url https://download.pytorch.org/whl/cu129 "torch==2.11.0" "
 #    --no-deps prevents pip from trying to upgrade torch back to the latest.
 pip install --no-deps "torchrl==0.11.1" "tensordict==0.11.0"
 
-pip install wandb
-pip install zarr
+# 5. Pinned so the environment stays reproducible over time. zarr must stay on
+#    the 2.x series: the diffusion policy code uses the zarr 2 API.
+pip install "wandb==0.28.1" "zarr==2.12.0"
 ```
 
 We provide SLURM scripts for PPO policy training and dataset generation. Set the cluster parameters at the top of the sbatch scripts, and set the path to your Maniskill Conda environment, then:
@@ -137,24 +145,50 @@ This repo supports evaluating a diffusion policy trained using my [diffusion-pol
 
 Presuming you have collected a `.zarr` dataset using the Teleop or RL-expert data generation pipelines described above, you can train a policy following the instructions in [diffusion-policy-experiments](https://github.com/Michaelszeng/diffusion-policy-experiments) then follow these instrutions to run/evaluate it:
 
-Firstly, install the dependencies of the diffusion policy training repo into your Maniskill environment (these instructions apply both locally and for installation onto a SLURM cluster):
+Firstly, install the dependencies of the diffusion policy training repo into your Maniskill environment (these instructions apply both locally and for installation onto a SLURM cluster).
 
 ```bash
 pip install -e /data/locomotion/michzeng/diffusion-policy-experiments --no-deps
 
 pip install \
+    "numpy==2.4.6" \
     "diffusers==0.11.1" \
     "huggingface-hub==0.25.2" \
     "zarr==2.12.0" \
     "numcodecs==0.12.1" \
     "accelerate==0.13.2" \
-    "wandb>=0.16" \
-    numba hydra-core \
-    termcolor pymunk shapely einops scikit-image scikit-video \
-    threadpoolctl boto3 datasets cffi cython \
-    imageio imageio-ffmpeg
+    "wandb==0.28.1" \
+    "numba==0.66.0" \
+    "hydra-core==1.3.4" \
+    "termcolor==3.3.0" \
+    "pymunk==7.3.0" \
+    "shapely==2.1.2" \
+    "einops==0.8.2" \
+    "scikit-image==0.26.0" \
+    "scikit-video==1.1.11" \
+    "threadpoolctl==3.6.0" \
+    "boto3==1.43.62" \
+    "datasets==5.0.1" \
+    "cffi==2.1.0" \
+    "cython==3.2.9" \
+    "imageio==2.37.4" \
+    "imageio-ffmpeg==0.6.0" \
+    "robomimic==0.3.0"
 
 pip install --no-deps "dill==0.3.5.1"
+```
+
+To verify the environment before submitting a job, load one checkpoint end to end:
+
+```bash
+python -c "
+import dill, torch, hydra
+payload = torch.load('/path/to/checkpoint.ckpt', pickle_module=dill, map_location='cpu', weights_only=False)
+cfg = payload['cfg']
+w = hydra.utils.get_class(cfg._target_)(cfg)
+w.load_payload(payload, exclude_keys=None, include_keys=None)
+print('OK')
+"
 ```
 
 Then, run evaluation using this script:
